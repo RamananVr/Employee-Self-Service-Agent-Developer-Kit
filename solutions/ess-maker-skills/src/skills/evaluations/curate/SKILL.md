@@ -76,6 +76,13 @@ confirmation, generation, preview, structural validation, and quality rules.
 Run structural validation with the vendored validator at the
 `structuralValidatorPath` above.
 
+The vendored curator skill's "Host integration contract" section describes
+resolving paths relative to a curator-package root that the submodule packaging
+once provided. That resolution does not apply here: the curator is vendored
+in-repo and this wrapper supplies the fixed `structuralValidatorPath` above
+directly. Use the paths this wrapper provides and ignore the vendored body's
+package-relative path-resolution instructions.
+
 Do not weaken confirmation or validation gates. Do not reinterpret the
 curator's generation rules. After receiving its structured hosted handoff, skip
 the curator local-only wrap-up because the Maker Kit owns the remaining
