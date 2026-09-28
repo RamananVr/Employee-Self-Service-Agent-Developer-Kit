@@ -1,0 +1,171 @@
+# Curate Knowledge-Grounded Evaluation Test Sets
+
+Create evaluation test sets grounded in a local knowledge source and a separate
+agent-instructions file. The active GitHub Copilot session is the reasoning
+host; the vendored curator skill is the authoritative workflow. This wrapper
+only supplies the Maker Kit host contract and lifecycle handoff. Never duplicate
+the curator instructions here or reimplement them in the host.
+
+This route is for knowledge-source-grounded creation only. Use local-file mode
+only for v1: require both a local knowledge source (files or a folder) and an
+agent-instructions file. It does not replace configured-topic creation or
+named-scenario catalogue generation.
+
+The curator content is vendored directly in this repository — there is no Git
+submodule to initialize and no version handshake to negotiate. The two vendored
+files live at fixed paths under this skill folder:
+
+```text
+curator/curate-evals.md          # the curator workflow
+curator/check_eval_artifacts.py  # the structural validator
+```
+
+## Step 1: Require both inputs
+
+Collect missing inputs one at a time:
+
+1. If the local knowledge source is missing, ask exactly one question for it,
+   then wait.
+2. After the knowledge source is available, if the agent-instructions file is
+   missing, ask exactly one question for the agent instructions, then wait.
+
+Do not infer a path, continue with one input, combine the questions, or ask for
+a scenario instead.
+
+## Step 2: Confirm the vendored curator is present
+
+Resolve these two paths relative to this skill folder
+(`src/skills/evaluations/curate/`):
+
+```text
+curator/curate-evals.md
+curator/check_eval_artifacts.py
+```
+
+Confirm both files exist before taking any curation action. If either file is
+missing, show this message and stop — do not attempt a fallback implementation
+and do not route to another generator:
+
+> The knowledge-source curator is not available in this workspace. Expected
+> these files under `src/skills/evaluations/curate/curator/`:
+>
+> - `curate-evals.md`
+> - `check_eval_artifacts.py`
+>
+> Re-clone or restore the Maker Kit so the vendored curator files are present,
+> then try again.
+
+Only after both files are confirmed present, **read `curator/curate-evals.md` in
+full** before taking any curation action. Treat these fixed paths as
+authoritative.
+
+## Step 3: Run the hosted curator flow
+
+Follow the vendored curator skill (`curator/curate-evals.md`) completely with
+these host parameters:
+
+```text
+hostOutputRoot=workspace/evaluations
+hostLifecycleHandoff=Maker Kit validation, maker review choice, promotion, scoped push, and post-success run/results lifecycle
+structuralValidatorPath=src/skills/evaluations/curate/curator/check_eval_artifacts.py
+```
+
+Keep version 1 in local-file mode only. The active GitHub Copilot session must
+perform the curator's source grounding, agent-instructions grounding, topic
+confirmation, generation, preview, structural validation, and quality rules.
+Run structural validation with the vendored validator at the
+`structuralValidatorPath` above.
+
+Do not weaken confirmation or validation gates. Do not reinterpret the
+curator's generation rules. After receiving its structured hosted handoff, skip
+the curator local-only wrap-up because the Maker Kit owns the remaining
+lifecycle.
+
+## Step 4: Validate, then ask for maker review
+
+### Accept only a complete hosted handoff
+
+Accept the curator handoff only when it is well formed, contains one or more
+generated set entries and all paths required by the curator flow,
+`structuralValidation` is exactly `passed`, and `qualityValidation` is exactly
+`passed`. A missing set, missing field, unexpected validation value, or
+incomplete curator run is a malformed, failed, or partial handoff.
+
+Before invoking Maker Kit validation or handing any set to the update skill,
+serialize the exact structured handoff to JSON and pipe it to this deterministic
+check from `solutions/ess-maker-skills/`:
+
+```powershell
+$handoffJson | py -3.12 scripts/eval_curator_handoff.py validate --repo-root ../..
+```
+
+Use `python` instead of `py -3.12` only when required by the host's portable
+Python convention. Parse exactly one JSON result. Continue only when the
+command exits successfully and `valid` is exactly `true`; then use only its
+normalized `sets[].folder` and `sets[].csv` paths for every later validation
+and lifecycle handoff. Stop before Maker Kit validation if any path contains
+traversal, resolves outside `workspace/evaluations`, crosses a symlink or
+junction escape, is missing, uses `exports/` as a set folder, places a CSV
+outside `workspace/evaluations/exports/`, or otherwise has malformed
+structure. Never repair, reinterpret, or substitute a rejected path.
+
+For every entry in `sets`, always run the Maker Kit validator in the next step,
+even when the curator reports `qualityValidation: passed`. Every generated set
+must then have successful Maker Kit quality validation before any lifecycle
+handoff.
+
+Any malformed, failed, or partial handoff, structural validation failure, or
+Maker Kit quality validation failure must remain local. It must not enter the
+update skill or proceed to promotion, push, cleanup, or run.
+
+For each generated set in the curator handoff:
+
+1. Read `src/skills/evaluations/validate/SKILL.md` and invoke its quality
+   validation for the exact returned set folder.
+2. Follow `src/skills/evaluations/quality-fix-flow.md` for any required or
+   user-selected fixes.
+3. After validation passes for all generated sets, read
+   `src/skills/evaluations/update/SKILL.md`.
+
+Use the available structured choice control to ask:
+
+> What would you like to do with these test sets?
+
+Offer exactly:
+
+1. **Edit the test sets myself**
+2. **Send them to a judge or SME for feedback**
+3. **Keep them unchanged**
+
+Wait for the maker's response. Do not enter update Step 7 before this choice.
+
+Route the response through the update skill without implementing any mutation,
+synchronization, review metadata, or push behavior in this wrapper:
+
+- **Edit the test sets myself** — hand the exact generated workspace set
+  folders to the update skill as explicitly preselected sets. This curator
+  gate has already selected the edit path, so update Step 2 must show the
+  relevant preview and cases, skip its generic Edit/SME/Keep continuation
+  question, and proceed directly to case selection and editing. Complete Steps
+  2 through 6, including YAML/CSV synchronization and validation, without
+  rediscovery or set reselection. When that path completes, return to this
+  maker review gate and wait for another choice.
+- **Send them to a judge or SME for feedback** — hand the exact generated
+  workspace set folders to update **Flow R1** as explicitly preselected sets.
+  After Flow R1 records the local review request, continue through update
+  **Step 7 onward**.
+- **Keep them unchanged** — hand the exact generated workspace set folders to
+  update **Step 7 onward** as explicitly preselected sets.
+
+The update skill is the one authoritative flow for all post-validation
+edit/synchronization/validation, review metadata, keep-local, setup check,
+promotion, scoped dry-run and push, cleanup, final status, and successful-push
+next actions. It is the sole source of truth for those lifecycle gates. Do not
+duplicate any of those commands, questions, or behaviors in this wrapper.
+
+Topic confirmation, generation preview, and the maker review choice are not
+push approval. Only explicit push approval inside update Step 7 authorizes the
+update skill to continue toward staging and push.
+
+Failed or partial validation stays local and blocks lifecycle handoff,
+promotion, push, and run. A missing vendored curator file also stops the flow.
