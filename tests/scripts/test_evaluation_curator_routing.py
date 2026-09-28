@@ -13,10 +13,6 @@ def _normalized(relative_path: str) -> str:
     return " ".join(_read(relative_path).split())
 
 
-def _read_repo(relative_path: str) -> str:
-    return (REPO_ROOT / relative_path).read_text(encoding="utf-8")
-
-
 def _section(text: str, start: str, end: str) -> str:
     return text[text.index(start) : text.index(end)]
 
@@ -520,7 +516,7 @@ def test_maker_readme_documents_all_evaluation_generation_sources():
     assert "agent instructions" in readme
     assert "grounded knowledge" in readme
     assert "instruction-adherence" in readme
-    assert "pinned curator" in readme
+    assert "vendored curator" in readme
     assert "bundled ess catalogue" in readme
     assert "without configured topics or documents" in readme
     assert "native `.mcs.yml`" in readme
@@ -540,19 +536,3 @@ def test_evaluation_docs_preserve_generation_skill_boundaries():
     assert "must not absorb" in create
     assert "document-grounding" in create
     assert "curator workflow" in create
-
-
-def test_setup_readme_documents_local_only_curator_submodule_recovery():
-    setup = " ".join(_read_repo("setup/README.md").split()).lower()
-
-    assert "git submodule sync --recursive" in setup
-    assert "git submodule update --init --recursive" in setup
-    assert "manual clone" in setup
-    assert "omitted submodules" in setup
-    assert "pinned curator dependency" in setup
-    assert "local-only" in setup
-    assert "private" in setup
-    assert "requires access" in setup
-    assert "public installer" in setup
-    assert "ci" in setup
-    assert "intentionally does not initialize" in setup
