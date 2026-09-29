@@ -78,7 +78,7 @@ def test_curator_wrapper_reads_vendored_files_without_duplication():
     assert "active GitHub Copilot session" in wrapper
 
 
-def test_curator_wrapper_defines_host_parameters_and_local_v1_boundary():
+def test_curator_wrapper_defines_host_parameters_and_mode_selection():
     wrapper = _read("src/skills/evaluations/curate/SKILL.md")
     normalized = " ".join(wrapper.split())
     normalized_lower = normalized.lower()
@@ -90,7 +90,10 @@ def test_curator_wrapper_defines_host_parameters_and_local_v1_boundary():
         "Maker Kit validation, maker review choice, promotion, scoped push, "
         "and post-success run/results lifecycle"
     ) in normalized
-    assert "local-file mode only for v1" in normalized_lower
+    # Wrapper asks the maker to choose local vs connected knowledge base first.
+    assert "connected knowledge base" in normalized_lower
+    assert "local files" in normalized_lower or "local folder" in normalized_lower
+    assert "local-file mode only for v1" not in normalized_lower
     assert "knowledge source" in wrapper.lower()
     assert "agent instructions" in wrapper.lower()
 
