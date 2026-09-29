@@ -49,6 +49,8 @@ class _FakePVA:
 
 
 class _FakeAgentBuilder:
+    """Duck-typed stand-in for ``AgentBuilderClient``."""
+
     instances: list["_FakeAgentBuilder"] = []
 
     def __init__(
@@ -208,11 +210,11 @@ def test_zero_bound_sources_reports_none_bound_and_exits_zero(
     assert _FakePVA.instances[0].env_url == "https://contoso.crm.dynamics.com"
 
 
-def test_native_agent_uses_canonical_environment_and_tenant(
-    tmp_path, monkeypatch, capsys
-):
-    monkeypatch.chdir(tmp_path)
-    environment_id, tenant_id = _write_native_config(tmp_path)
+def _patch_native_success(monkeypatch: pytest.MonkeyPatch, tenant_id: str) -> None:
+    """Wire up native-agent auth/client fakes for the happy path.
+
+    Individual tests override pieces of this to force specific failures.
+    """
     monkeypatch.setattr(
         resolve_kb_connection,
         "discover_tenant",
@@ -251,6 +253,14 @@ def test_native_agent_uses_canonical_environment_and_tenant(
         _FakeAgentBuilder,
         raising=False,
     )
+
+
+def test_native_agent_uses_canonical_environment_and_tenant(
+    tmp_path, monkeypatch, capsys
+):
+    monkeypatch.chdir(tmp_path)
+    environment_id, tenant_id = _write_native_config(tmp_path)
+    _patch_native_success(monkeypatch, tenant_id)
 
     exit_code = resolve_kb_connection.main([])
 
@@ -321,51 +331,6 @@ def test_authenticate_failure_reports_json_error_and_exits_nonzero(
     assert payload["status"] == "error"
     assert payload["connections"] == []
     assert "network unreachable" in payload["error"]
-
-
-def _patch_native_success(monkeypatch: pytest.MonkeyPatch, tenant_id: str) -> None:
-    """Wire up native-agent auth/client fakes for the happy path.
-
-    Individual tests override pieces of this to force specific failures.
-    """
-    monkeypatch.setattr(
-        resolve_kb_connection,
-        "discover_tenant",
-        lambda _env_url: pytest.fail(
-            "Native agent resolution must not require a Dataverse endpoint"
-        ),
-    )
-    monkeypatch.setattr(
-        resolve_kb_connection,
-        "PVAClient",
-        lambda *_args, **_kwargs: pytest.fail(
-            "Native agent resolution must use AgentBuilder"
-        ),
-    )
-    monkeypatch.setattr(
-        resolve_kb_connection,
-        "authenticate_flightcheck",
-        lambda ring, include_connectivity: ("native-token", tenant_id),
-        raising=False,
-    )
-    monkeypatch.setattr(
-        resolve_kb_connection,
-        "ring_from_environment_host",
-        lambda host: "test",
-        raising=False,
-    )
-    monkeypatch.setattr(
-        resolve_kb_connection,
-        "validate_environment_host",
-        lambda host, ring: host,
-        raising=False,
-    )
-    monkeypatch.setattr(
-        resolve_kb_connection,
-        "AgentBuilderClient",
-        _FakeAgentBuilder,
-        raising=False,
-    )
 
 
 def test_native_agent_missing_environment_id_reports_json_error(

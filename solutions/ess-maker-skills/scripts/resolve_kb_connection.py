@@ -60,11 +60,31 @@ class _AgentBuilderKnowledgeSourceClient:
         return sources
 
 
+def _load_native_setup_state() -> dict[str, Any]:
+    """Load and validate the canonical setup state.
+
+    Reads ``.local/setup/config.json``, raising ``ValueError`` if it is
+    missing, unreadable, or not schema version 4.
+    """
+    try:
+        with open(SETUP_STATE_PATH, "r", encoding="utf-8") as f:
+            setup = json.load(f)
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(
+            f"Could not read {SETUP_STATE_PATH}: {exc}"
+        ) from exc
+    if not isinstance(setup, dict) or setup.get("schema_version") != 4:
+        raise ValueError(
+            f"{SETUP_STATE_PATH} is not valid schema version 4 setup state."
+        )
+    return setup
+
+
 def _native_identity(
     config: dict[str, Any],
     bot_id: str | None,
-) -> tuple[str, str]:
-    """Return the canonical tenant and environment for a native DA agent."""
+) -> str:
+    """Return the canonical tenant id for a native DA agent."""
     agent = config.get("agent")
     if not isinstance(agent, dict):
         agent = {}
@@ -80,17 +100,7 @@ def _native_identity(
             "No agent botId found in .local/config.json. Run /setup first."
         )
 
-    try:
-        with open(SETUP_STATE_PATH, "r", encoding="utf-8") as f:
-            setup = json.load(f)
-    except (OSError, json.JSONDecodeError) as exc:
-        raise ValueError(
-            f"Could not read {SETUP_STATE_PATH}: {exc}"
-        ) from exc
-    if not isinstance(setup, dict) or setup.get("schema_version") != 4:
-        raise ValueError(
-            f"{SETUP_STATE_PATH} is not valid schema version 4 setup state."
-        )
+    setup = _load_native_setup_state()
 
     environment = setup.get("environment")
     if not isinstance(environment, dict):
@@ -129,7 +139,7 @@ def _native_identity(
         raise ValueError(
             f"{SETUP_STATE_PATH} has no tenant identity for the active environment."
         )
-    return tenant_id, environment_id
+    return tenant_id
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -178,7 +188,7 @@ def main(argv: list[str] | None = None) -> int:
             return 1
     else:
         try:
-            tenant_id, _environment_id = _native_identity(config, bot_id)
+            tenant_id = _native_identity(config, bot_id)
         except ValueError as exc:
             print(json.dumps(_error_result(str(exc))))
             return 1
