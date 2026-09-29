@@ -517,6 +517,7 @@ def test_maker_readme_documents_all_evaluation_generation_sources():
     assert "configured agent topics" in readme
     assert "behavior already present in the active agent" in readme
     assert "local knowledge source" in readme
+    assert "connected knowledge base" in readme
     assert "agent instructions" in readme
     assert "grounded knowledge" in readme
     assert "instruction-adherence" in readme
