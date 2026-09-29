@@ -26,6 +26,7 @@ def test_dispatcher_routes_local_knowledge_before_topic_matching():
     assert "even when neither required path was supplied" in normalized
     assert "route immediately" in normalized
     assert "local knowledge source" in normalized
+    assert "connected knowledge base" in normalized
     assert "agent-instructions file" in normalized
     assert dispatcher.index("src/skills/evaluations/curate/SKILL.md") < (
         dispatcher.index("### Matching topic found")

@@ -24,17 +24,20 @@ curation intent. This includes selecting or saying **"curate from a knowledge
 source"**, asking to curate knowledge-grounded evaluations, or explicitly
 asking for document-grounded evaluation creation.
 
-### Local knowledge-source route
+### Local or connected knowledge-source route
 
 Route immediately to `src/skills/evaluations/curate/SKILL.md` when the user
 expresses that explicit curation intent, even when neither required path was
-supplied. The curator wrapper owns collecting the missing local knowledge
-source and agent-instructions file one at a time; do not fall through to the
-scenario question. The agent-instructions file remains required; the curator
-wrapper enforces that requirement before invoking the vendored skill.
+supplied. The knowledge source may be a local knowledge source (one or more
+files or a folder) or a connected knowledge base (for example ServiceNow or
+SharePoint); both forms route to the same curator wrapper. The curator
+wrapper owns collecting the missing knowledge source and agent-instructions
+file one at a time; do not fall through to the scenario question. The
+agent-instructions file remains required; the curator wrapper enforces that
+requirement before invoking the vendored skill.
 
 Also route immediately when the request explicitly combines a supplied local
-knowledge source (one or more files or a folder) with document-grounded
+knowledge source or connected knowledge base with document-grounded
 evaluation creation. This explicit document grounding route occurs before
 configured-topic search, even when a configured topic covers the same subject.
 
