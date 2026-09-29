@@ -21,6 +21,8 @@ from tests.mcp.evaluations.skill_eval import (
     MAKER_VALIDATOR_SKILL_PATH,
     QUALITY_FIX_FLOW_PATH,
     STRUCTURAL_VALIDATOR_PATH,
+    SYNTHETIC_KB_ARTICLES,
+    SYNTHETIC_KB_EMPTY_SUBJECT,
     SYNTHETIC_REPO_ROOT,
     SYNTHETIC_SOLUTION_ROOT,
     UPDATE_SKILL_PATH,
@@ -32,6 +34,17 @@ from tests.mcp.evaluations.skill_eval import (
     tool_contracts,
     run_eval,
 )
+
+# The connected-KB tests below (test_connected_kb_*) are offline/synthetic:
+# they manually drive `backend.invoke(...)` against the fake `search`/`fetch`
+# tools and the SYNTHETIC_KB_ARTICLES fixture to prove the curator's
+# connected-KB CALL SEQUENCE (discovery search -> targeted search+fetch
+# grounding -> eval-set write; skip fetch/write on zero search results). They
+# run in CI with no credentials and do NOT invoke a real model, so they do
+# NOT prove that a real connected knowledge-base backend returns
+# result/content shapes compatible with what the curator expects — closing
+# that gap is left to a live manual dry-run (mirrors the design's Layer-3
+# caveat).
 
 
 def _ready_backend() -> FakeEvaluationWorkspace:
@@ -815,6 +828,71 @@ def test_read_gate_helpers_accept_authoritative_paths(
     assert _matching_read_index(backend.calls, CURATOR_SKILL_PATH) is not None
     assert _missing_required_read_paths(backend.calls, required_paths) == []
     assert _matching_read_index(backend.calls, MAKER_VALIDATOR_SKILL_PATH) is not None
+
+
+def test_connected_kb_discovers_topics_then_grounds_before_generation() -> None:
+    backend = _ready_backend()
+
+    discovery_queries = ("password access", "leave time off")
+    for query in discovery_queries:
+        discovery = backend.invoke("search", {"query": query})
+        assert discovery.kind == "search"
+        if query == "password access":
+            discovery_ids = [result["id"] for result in discovery.result]
+            assert "kb0001" in discovery_ids or "kb0003" in discovery_ids
+
+    targeted_search = backend.invoke("search", {"query": "PTO rollover"})
+    assert targeted_search.kind == "search"
+    assert targeted_search.result
+    matched_ids = [result["id"] for result in targeted_search.result]
+    assert matched_ids == ["kb0004"]
+
+    fetch = backend.invoke("fetch", {"id": "kb0004"})
+    assert fetch.kind == "fetch"
+    assert not fetch.failed
+    assert fetch.result["body"] == SYNTHETIC_KB_ARTICLES["kb0004"]["body"]
+    assert "40 hours" in fetch.result["body"]
+
+    write = backend.invoke(
+        "write_file",
+        {
+            "path": "workspace/evaluations/pto/pto.mcs.yml",
+            "content": "kind: EvaluationSet",
+        },
+    )
+    assert not write.failed
+
+    calls = backend.calls
+    search_calls = [call for call in calls if call.kind == "search"]
+    assert len(search_calls) == len(discovery_queries) + 1
+    fetch_index = next(
+        index for index, call in enumerate(calls) if call.kind == "fetch"
+    )
+    write_index = next(
+        index for index, call in enumerate(calls) if call.kind == "write"
+    )
+    assert fetch_index < write_index, (
+        "Expected grounding fetch before the eval-set write for the topic; "
+        f"got fetch={fetch_index}, write={write_index}."
+    )
+
+
+def test_connected_kb_zero_result_topic_generates_no_cases() -> None:
+    backend = _ready_backend()
+
+    empty_search = backend.invoke(
+        "search", {"query": SYNTHETIC_KB_EMPTY_SUBJECT}
+    )
+
+    assert empty_search.kind == "search"
+    assert not empty_search.failed
+    assert empty_search.result == []
+
+    # A well-behaved connected-KB flow does not fetch or write for a topic
+    # whose search returned nothing: skip, don't fabricate.
+    calls = backend.calls
+    assert not any(call.kind == "fetch" for call in calls)
+    assert not any(call.kind == "write" for call in calls)
 
 
 def test_session_options_disable_host_and_production_connections(tmp_path) -> None:
