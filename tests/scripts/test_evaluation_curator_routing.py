@@ -36,6 +36,39 @@ def test_dispatcher_routes_local_knowledge_before_topic_matching():
     )
 
 
+def test_curator_wrapper_resolves_and_confirms_connected_kb_connection():
+    wrapper_text = _read("src/skills/evaluations/curate/SKILL.md")
+    wrapper = " ".join(wrapper_text.split())
+    normalized_lower = wrapper.lower()
+
+    # Resolver shim runs ahead of the vendored curator body's Step 3b.
+    assert "scripts/resolve_kb_connection.py" in wrapper
+    assert "before proceeding into the curator body's step 3b" in normalized_lower
+    assert wrapper.index("scripts/resolve_kb_connection.py") < wrapper.index(
+        "existing Step 3b/3c flow"
+    )
+
+    # Error and none_bound both stop the flow and report the specific reason,
+    # with no automatic fallback to local-file mode.
+    assert '`status == "error"`' in wrapper
+    assert '`status == "none_bound"`' in wrapper
+    assert "stop and report" in normalized_lower
+    assert "automatically switch to local" not in normalized_lower
+    assert "automatically fall back to local" not in normalized_lower
+    assert "must not silently fall back to local-file mode" in normalized_lower
+    assert "restart mode selection" in normalized_lower
+
+    # Single resolved connection requires explicit maker confirmation.
+    assert '`status == "ok"`' in wrapper
+    assert "exactly one connection" in normalized_lower
+    assert "require" in normalized_lower and "explicit confirmation" in normalized_lower
+
+    # Multiple resolved connections require the maker to pick one or more.
+    assert "more than one connection" in normalized_lower
+    assert "list all of them" in normalized_lower
+    assert "pick one or more" in normalized_lower
+
+
 def test_dispatcher_preserves_topic_and_catalogue_routes():
     dispatcher = _read("src/skills/evaluations/dispatcher/SKILL.md")
     normalized = " ".join(dispatcher.split()).lower()

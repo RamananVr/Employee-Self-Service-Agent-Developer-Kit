@@ -69,6 +69,11 @@ authoritative.
 
 ## Step 3: Run the hosted curator flow
 
+If the maker chose the connected knowledge base mode, resolve and confirm the
+bound connection first (see "Resolve and confirm the connected knowledge base"
+below) before proceeding into the curator body's Step 3b. Skip that gate
+entirely in local-file mode.
+
 Follow the vendored curator skill (`curator/curate-evals.md`) completely with
 these host parameters:
 
@@ -84,6 +89,36 @@ must perform the curator's source grounding, agent-instructions grounding, topic
 confirmation, generation, preview, structural validation, and quality rules.
 Run structural validation with the vendored validator at the
 `structuralValidatorPath` above.
+
+### Resolve and confirm the connected knowledge base
+
+Only when the maker chose connected knowledge base mode: before proceeding into
+the curator body's Step 3b (discovery/grounding), run the resolver CLI shim
+from `solutions/ess-maker-skills/`:
+
+```powershell
+py -3.12 scripts/resolve_kb_connection.py
+```
+
+Parse its single JSON result. Never proceed into Step 3b before this gate
+completes.
+
+- `status == "error"` or `status == "none_bound"` — stop and report the exact
+  reason from the shim's `error` field (or, for `none_bound`, that no
+  Graph-connector knowledge source is bound to this agent) to the maker. Do
+  not attempt a fallback implementation and must not silently fall back to
+  local-file mode. The maker must explicitly restart mode selection at Step 1
+  themselves if they want local-file mode instead.
+- `status == "ok"` with exactly one connection — show the maker that
+  connection's `connection_name` (and its `state`/`status` when present) and
+  require explicit confirmation before proceeding into Step 3b.
+- `status == "ok"` with more than one connection — list all of them
+  (`connection_name` plus `state`/`status` for each) and require the maker to
+  pick one or more before proceeding into Step 3b.
+
+Only after the maker's confirmation or choice, hand off the confirmed
+`connection_name`(s) into the curator body's existing Step 3b/3c flow as the
+connected-KB source identifier it already expects.
 
 The vendored curator skill's "Host integration contract" section describes
 resolving paths relative to a curator-package root that the submodule packaging
