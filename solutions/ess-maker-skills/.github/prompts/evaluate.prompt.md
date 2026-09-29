@@ -25,7 +25,8 @@ workspace.
      `src/skills/evaluations/dispatcher/SKILL.md` and follow it for either
      choice:
      - **Create for a configured or named scenario**.
-     - **Curate from a knowledge source** using local documents plus an
+     - **Curate from a knowledge source** using local documents or a
+       connected knowledge base (e.g. ServiceNow, SharePoint) plus an
        agent-instructions file.
    - **update** -> read `src/skills/evaluations/update/SKILL.md` and follow it.
    - **tag for review** -> read
