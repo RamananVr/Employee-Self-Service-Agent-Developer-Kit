@@ -1,15 +1,18 @@
 # Curate Knowledge-Grounded Evaluation Test Sets
 
-Create evaluation test sets grounded in a local knowledge source and a separate
+Create evaluation test sets grounded in a knowledge source (local files or a
+connected knowledge base) and a separate
 agent-instructions file. The active GitHub Copilot session is the reasoning
 host; the vendored curator skill is the authoritative workflow. This wrapper
 only supplies the Maker Kit host contract and lifecycle handoff. Never duplicate
 the curator instructions here or reimplement them in the host.
 
-This route is for knowledge-source-grounded creation only. Use local-file mode
-only for v1: require both a local knowledge source (files or a folder) and an
-agent-instructions file. It does not replace configured-topic creation or
-named-scenario catalogue generation.
+This route is for knowledge-source-grounded creation only. It requires an
+agent-instructions file plus a knowledge source, and the knowledge source may
+be local files (a folder or files) or a connected knowledge base (for example
+ServiceNow or SharePoint) reachable via a search/fetch tool in the session. It
+does not replace configured-topic creation or named-scenario catalogue
+generation.
 
 The curator content is vendored directly in this repository — there is no Git
 submodule to initialize and no version handshake to negotiate. The two vendored
@@ -20,17 +23,22 @@ curator/curate-evals.md          # the curator workflow
 curator/check_eval_artifacts.py  # the structural validator
 ```
 
-## Step 1: Require both inputs
+## Step 1: Choose a mode, then require both inputs
 
 Collect missing inputs one at a time:
 
-1. If the local knowledge source is missing, ask exactly one question for it,
-   then wait.
-2. After the knowledge source is available, if the agent-instructions file is
-   missing, ask exactly one question for the agent instructions, then wait.
+1. First, ask the maker whether to curate from local files/folder or from
+   their connected knowledge base (for example ServiceNow or SharePoint), then
+   wait.
+2. After the mode is chosen, collect the inputs that mode needs, one at a
+   time, waiting after each: for local mode, ask for the folder/files path;
+   for connected mode, confirm which connected knowledge base or tool to use
+   (only ask this if more than one is available in the session).
+3. In both modes, the agent-instructions file is required. If it is missing,
+   ask exactly one question for the agent instructions, then wait.
 
-Do not infer a path, continue with one input, combine the questions, or ask for
-a scenario instead.
+Do not infer a path, continue with one input, combine the questions, skip the
+mode question, or ask for a scenario instead.
 
 ## Step 2: Confirm the vendored curator is present
 
@@ -70,8 +78,9 @@ hostLifecycleHandoff=Maker Kit validation, maker review choice, promotion, scope
 structuralValidatorPath=src/skills/evaluations/curate/curator/check_eval_artifacts.py
 ```
 
-Keep version 1 in local-file mode only. The active GitHub Copilot session must
-perform the curator's source grounding, agent-instructions grounding, topic
+Proceed in the mode the maker chose (local-file or connected knowledge base);
+the vendored curator skill branches on mode. The active GitHub Copilot session
+must perform the curator's source grounding, agent-instructions grounding, topic
 confirmation, generation, preview, structural validation, and quality rules.
 Run structural validation with the vendored validator at the
 `structuralValidatorPath` above.
