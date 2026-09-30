@@ -1027,9 +1027,12 @@ def search_hit(
             dict(resource)
             if resource is not None
             else {
+                "@odata.type": "#microsoft.graph.externalConnectors.externalItem",
                 "id": hit_id,
-                "title": "Parental leave",
-                "url": f"https://example.invalid/kb/{hit_id}",
+                "properties": {
+                    "title": "Parental leave",
+                    "url": f"https://example.invalid/kb/{hit_id}",
+                },
             }
         ),
     }

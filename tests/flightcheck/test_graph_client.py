@@ -202,6 +202,19 @@ def test_external_item_scope_is_requested():
     )
 
 
+def test_default_search_hit_uses_external_item_properties():
+    resource = graph_mocks.search_hit()["resource"]
+
+    assert resource == {
+        "@odata.type": "#microsoft.graph.externalConnectors.externalItem",
+        "id": "KB0001001",
+        "properties": {
+            "title": "Parental leave",
+            "url": "https://example.invalid/kb/KB0001001",
+        },
+    }
+
+
 def test_search_external_items_posts_expected_json_without_fields():
     payload = graph_mocks.external_item_search_response()
     response = _resp(200, payload)
