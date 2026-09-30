@@ -18,6 +18,7 @@ import re
 import shlex
 import subprocess
 from typing import Any
+from urllib.parse import urlparse
 
 from jsonschema import ValidationError, validate
 
@@ -187,7 +188,7 @@ class ServiceNowLiveScenario:
     classification: str = "servicenow"
     graph_failure: str | None = None
     mcp_failure: str | None = None
-    host_identity: str = "confirmed"
+    maker_confirmed: bool = True
     targeted_hits: tuple[dict[str, str], ...] | None = None
     fetch_failures: frozenset[str] = frozenset()
     returned_identifier_overrides: dict[str, dict[str, str]] = field(
@@ -206,6 +207,24 @@ def _search_tokens(text: str) -> set[str]:
         for word in re.findall(r"\w+", text.lower())
         if word not in _SEARCH_STOPWORDS and len(word) >= 3
     }
+
+
+def _normalized_url_hostname(value: str) -> str | None:
+    try:
+        parsed = urlparse(value)
+        hostname = parsed.hostname
+    except ValueError:
+        return None
+    if parsed.scheme not in {"http", "https"} or not hostname:
+        return None
+    return hostname.lower().rstrip(".")
+
+
+def _is_servicenow_hostname(hostname: str) -> bool:
+    return re.fullmatch(
+        r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.service-now\.com",
+        hostname,
+    ) is not None
 
 
 @dataclass(frozen=True)
@@ -590,8 +609,12 @@ class FakeEvaluationWorkspace:
         )
         self._record(
             "maker_confirmation",
-            {"connection_id": SERVICENOW_CONNECTION_ID, "confirmed": True},
-            {"confirmed": True},
+            {
+                "connection_id": SERVICENOW_CONNECTION_ID,
+                "confirmed": scenario.maker_confirmed,
+            },
+            {"confirmed": scenario.maker_confirmed},
+            failed=not scenario.maker_confirmed,
             kind="confirm",
         )
 
@@ -613,40 +636,6 @@ class FakeEvaluationWorkspace:
                 {"classification": "other"},
                 {"discarded_specialized_results": True},
                 kind="generic_continuation",
-            )
-            return
-
-        self._record(
-            "servicenow_host_identity",
-            {
-                "classification": scenario.classification,
-                "indexed_source_url": (
-                    f"{SERVICENOW_INSTANCE_URL}/kb?id=classification-probe"
-                ),
-                "configured_mcp_instance": SERVICENOW_INSTANCE_URL,
-                "status": scenario.host_identity,
-            },
-            {
-                "classification": "servicenow",
-                "instance": SERVICENOW_INSTANCE_URL,
-                "matches_configured_mcp_instance": (
-                    scenario.host_identity == "confirmed"
-                ),
-                "confirmed": scenario.host_identity == "confirmed",
-            },
-            failed=scenario.host_identity != "confirmed",
-            kind="host_identity",
-        )
-        if scenario.host_identity != "confirmed":
-            self._record(
-                "guidance",
-                {"host_identity": scenario.host_identity},
-                {
-                    "action": "reconfigure_servicenow_identity",
-                    "message": "Confirm one configured ServiceNow MCP instance that "
-                    "matches the indexed source URL.",
-                },
-                kind="guidance",
             )
             return
 
@@ -699,6 +688,74 @@ class FakeEvaluationWorkspace:
                 {
                     "action": "restart_with_local_files",
                     "message": "Graph search failed; restart curation with local files.",
+                },
+                kind="guidance",
+            )
+            return
+
+        mapped_hits = [
+            hit
+            for hit in targeted.result["hits"]
+            if hit.get("sys_id") or hit.get("number")
+        ]
+        configured_hostname = _normalized_url_hostname(SERVICENOW_INSTANCE_URL)
+        source_hostnames: list[str] = []
+        identity_failure: str | None = None
+        for hit in mapped_hits:
+            source_url = hit.get("sourceUrl")
+            hostname = (
+                _normalized_url_hostname(source_url)
+                if isinstance(source_url, str)
+                else None
+            )
+            if hostname is None:
+                identity_failure = "missing_source_hostname"
+                break
+            if not _is_servicenow_hostname(hostname):
+                identity_failure = "invalid_servicenow_hostname"
+                break
+            source_hostnames.append(hostname)
+
+        unique_hostnames = sorted(set(source_hostnames))
+        if identity_failure is None:
+            if len(unique_hostnames) != 1:
+                identity_failure = "conflicting_source_hostnames"
+            elif unique_hostnames[0] != configured_hostname:
+                identity_failure = "configured_instance_mismatch"
+            elif not scenario.maker_confirmed:
+                identity_failure = "unconfirmed_maker_identity"
+
+        identity = self._record(
+            "servicenow_host_identity",
+            {
+                "classification": scenario.classification,
+                "mapped_source_urls": [
+                    hit.get("sourceUrl") for hit in mapped_hits
+                ],
+                "configured_mcp_instance": SERVICENOW_INSTANCE_URL,
+                "maker_confirmed": scenario.maker_confirmed,
+            },
+            {
+                "classification": "servicenow",
+                "source_hostname": (
+                    unique_hostnames[0] if len(unique_hostnames) == 1 else None
+                ),
+                "configured_hostname": configured_hostname,
+                "matches_configured_mcp_instance": identity_failure is None,
+                "confirmed": identity_failure is None,
+                "failure": identity_failure,
+            },
+            failed=identity_failure is not None,
+            kind="host_identity",
+        )
+        if identity.failed:
+            self._record(
+                "guidance",
+                {"host_identity": identity_failure},
+                {
+                    "action": "reconfigure_servicenow_identity",
+                    "message": "Confirm one configured ServiceNow MCP instance that "
+                    "matches every mapped targeted hit source URL.",
                 },
                 kind="guidance",
             )
@@ -808,15 +865,19 @@ class FakeEvaluationWorkspace:
             )
 
         if grounded_ids:
-            self._record(
+            grounded_ids_content = "\n".join(
+                f"  - {record_id}" for record_id in grounded_ids
+            )
+            self.invoke(
                 "write_file",
                 {
                     "path": "workspace/evaluations/servicenow-live/live.mcs.yml",
-                    "content": "kind: EvaluationSet",
-                    "grounded_record_ids": grounded_ids,
+                    "content": (
+                        "kind: EvaluationSet\n"
+                        "groundedRecordIds:\n"
+                        f"{grounded_ids_content}\n"
+                    ),
                 },
-                {"written": True},
-                kind="write",
             )
 
     @staticmethod

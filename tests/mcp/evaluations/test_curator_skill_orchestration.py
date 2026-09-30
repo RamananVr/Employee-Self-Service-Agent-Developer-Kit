@@ -1004,17 +1004,18 @@ def test_servicenow_live_resolves_searches_fetches_and_grounds_before_write() ->
         "confirmed": True,
     }
     assert resolve_index < confirm_index < graph_indexes[0]
-    assert confirm_index < identity_index < graph_indexes[0]
-    assert max(graph_indexes) < min(fetch_indexes)
+    assert max(graph_indexes) < identity_index < min(fetch_indexes)
     assert max(fetch_indexes) < write_index
     assert len(grounding_indexes) == 2
     assert max(fetch_indexes) < max(grounding_indexes) < write_index
     host_identity = next(call for call in calls if call.kind == "host_identity")
     assert host_identity.result == {
         "classification": "servicenow",
-        "instance": "https://fake.service-now.com",
+        "source_hostname": "fake.service-now.com",
+        "configured_hostname": "fake.service-now.com",
         "matches_configured_mcp_instance": True,
         "confirmed": True,
+        "failure": None,
     }
 
     searches = [calls[index] for index in graph_indexes]
@@ -1060,10 +1061,13 @@ def test_servicenow_live_resolves_searches_fetches_and_grounds_before_write() ->
         for call in calls
     )
     assert calls[write_index].result["written"] is True
-    assert calls[write_index].arguments["grounded_record_ids"] == [
-        "sys-parental-leave",
-        "sys-pto-rollover",
-    ]
+    assert calls[write_index].name == "write_file"
+    assert calls[write_index].arguments["content"] == (
+        "kind: EvaluationSet\n"
+        "groundedRecordIds:\n"
+        "  - sys-parental-leave\n"
+        "  - sys-pto-rollover\n"
+    )
 
 
 def test_servicenow_live_classification_other_continues_generic_without_mapping() -> None:
@@ -1136,7 +1140,11 @@ def test_servicenow_live_one_fetch_failure_writes_remaining_grounded_subset() ->
         for call in backend.calls
     )
     write = next(call for call in backend.calls if call.kind == "write")
-    assert write.arguments["grounded_record_ids"] == ["sys-parental-leave"]
+    assert write.arguments["content"] == (
+        "kind: EvaluationSet\n"
+        "groundedRecordIds:\n"
+        "  - sys-parental-leave\n"
+    )
 
 
 def test_servicenow_live_returned_identifier_mismatch_is_disclosed_and_excluded() -> None:
@@ -1158,23 +1166,137 @@ def test_servicenow_live_returned_identifier_mismatch_is_disclosed_and_excluded(
         for call in backend.calls
     )
     write = next(call for call in backend.calls if call.kind == "write")
-    assert write.arguments["grounded_record_ids"] == ["sys-pto-rollover"]
+    assert write.arguments["content"] == (
+        "kind: EvaluationSet\n"
+        "groundedRecordIds:\n"
+        "  - sys-pto-rollover\n"
+    )
 
 
 @pytest.mark.parametrize(
-    "host_identity",
-    ["missing", "conflicting", "mismatched", "unconfirmed"],
+    ("expected_failure", "targeted_hits", "maker_confirmed"),
+    [
+        (
+            "missing_source_hostname",
+            (
+                {
+                    "title": "Parental leave",
+                    "sys_id": "sys-parental-leave",
+                },
+            ),
+            True,
+        ),
+        (
+            "missing_source_hostname",
+            (
+                {
+                    "title": "Parental leave",
+                    "sys_id": "sys-parental-leave",
+                    "sourceUrl": "not-a-url",
+                },
+            ),
+            True,
+        ),
+        (
+            "configured_instance_mismatch",
+            (
+                {
+                    "title": "Parental leave",
+                    "sys_id": "sys-parental-leave",
+                    "sourceUrl": (
+                        "https://wrong.service-now.com/kb?id=sys-parental-leave"
+                    ),
+                },
+            ),
+            True,
+        ),
+        (
+            "conflicting_source_hostnames",
+            (
+                {
+                    "title": "Parental leave",
+                    "sys_id": "sys-parental-leave",
+                    "sourceUrl": (
+                        "https://fake.service-now.com/kb?id=sys-parental-leave"
+                    ),
+                },
+                {
+                    "title": "PTO rollover",
+                    "number": "KB009876",
+                    "sourceUrl": (
+                        "https://wrong.service-now.com/kb?number=KB009876"
+                    ),
+                },
+            ),
+            True,
+        ),
+        (
+            "invalid_servicenow_hostname",
+            (
+                {
+                    "title": "Parental leave",
+                    "sys_id": "sys-parental-leave",
+                    "sourceUrl": (
+                        "https://fake.service-now.com.evil.example/"
+                        "kb?id=sys-parental-leave"
+                    ),
+                },
+            ),
+            True,
+        ),
+        (
+            "unconfirmed_maker_identity",
+            (
+                {
+                    "title": "Parental leave",
+                    "sys_id": "sys-parental-leave",
+                    "sourceUrl": (
+                        "https://FAKE.SERVICE-NOW.COM./kb?id=sys-parental-leave"
+                    ),
+                },
+            ),
+            False,
+        ),
+    ],
+    ids=[
+        "missing-source-url",
+        "missing-source-hostname",
+        "wrong-instance",
+        "mixed-instance",
+        "lookalike-hostname",
+        "unconfirmed-maker",
+    ],
 )
 def test_servicenow_live_invalid_host_identity_stops_before_fetch(
-    host_identity: str,
+    expected_failure: str,
+    targeted_hits: tuple[dict[str, str], ...],
+    maker_confirmed: bool,
 ) -> None:
     backend = _ready_backend()
 
     backend.run_servicenow_live(
-        ServiceNowLiveScenario(host_identity=host_identity)
+        ServiceNowLiveScenario(
+            targeted_hits=targeted_hits,
+            maker_confirmed=maker_confirmed,
+        )
     )
 
+    targeted_index = next(
+        index
+        for index, call in enumerate(backend.calls)
+        if call.kind == "graph_search" and call.arguments["phase"] == "targeted"
+    )
+    identity_index = next(
+        index
+        for index, call in enumerate(backend.calls)
+        if call.kind == "host_identity"
+    )
+    identity = backend.calls[identity_index]
+    assert targeted_index < identity_index
+    assert identity.failed
+    assert identity.result["failure"] == expected_failure
     assert not any(call.kind == "servicenow_fetch" for call in backend.calls)
+    assert not any(call.kind == "identifier_mapping" for call in backend.calls)
     assert not any(call.kind == "write" for call in backend.calls)
     assert any(
         call.kind == "guidance"
