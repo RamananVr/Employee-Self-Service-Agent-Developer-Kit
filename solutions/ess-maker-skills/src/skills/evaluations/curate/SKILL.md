@@ -138,16 +138,22 @@ py -3.12 scripts/search_connected_kb.py `
 ```
 
 Parse only the CLI's deterministic JSON. Do not parse console prose or call
-Graph through an improvised path. Use the returned canonical Graph metadata
-classification from `connection.classification` before using any returned hit:
+Graph through an improvised path. The first bounded CLI response may be used
+to classify the connection from `connection.classification`, but classification
+must be resolved before identifier mapping or any ServiceNow MCP use:
 
-- If the classification is `ambiguous`, ask the maker to confirm it is
-  ServiceNow before any MCP use.
-- If the classification is `other`, remain on the generic connected-KB flow
-  described by the curator body. Do not invoke ServiceNow MCP.
-- Only a `servicenow` classification, or an `ambiguous` classification the
-  maker explicitly confirms as ServiceNow, enters the rest of this
-  specialization.
+- If the classification is `servicenow`, continue with the Graph-ranked
+  results in that response and enter the rest of this specialization.
+- If the classification is `ambiguous`, ask the maker whether the connection
+  is ServiceNow. A maker-confirmed ServiceNow connection continues with that
+  response's Graph-ranked results. If the maker says it is not ServiceNow,
+  treat it exactly like `other`.
+- If the classification is `other`, or the maker says an ambiguous connection
+  is not ServiceNow, discard the shim response for grounding, exit this
+  specialization before identifier mapping, and rerun or continue the
+  vendored curator's existing generic Search/Fetch contract unchanged for the
+  same bounded operation. Do not map ServiceNow identifiers or invoke
+  ServiceNow MCP on this branch.
 
 Use bounded retrieval throughout:
 
@@ -155,11 +161,29 @@ Use bounded retrieval throughout:
    **top 5-10 results**.
 2. After the maker confirms topics, run **one targeted query per confirmed
    topic**, limited to the **top 10-20 results**.
-3. Map only returned safe `sys_id`/article-number identifiers. An unmapped
-   Graph hit must be skipped and disclosed to the maker; never infer an
-   identifier from a title, URL, snippet, or other text.
-4. Fetch only the selected, mapped records through ServiceNow MCP. Use exactly
-   one of these projections:
+3. For each targeted top-10-20 Graph result subset, map every returned hit
+   that has a verified safe `sys_id` or article-number identifier. Every such
+   safely mapped hit is selected and must be fetched before generation. Do not
+   choose a smaller or more promising subset from titles, snippets, or other
+   preview text. Only a disclosed unmapped hit or a disclosed individual fetch
+   failure may be omitted. Never infer an identifier from a title, URL,
+   snippet, or other text.
+4. Before any ServiceNow MCP record fetch, perform a fail-closed source
+   identity check. Derive the expected ServiceNow hostname from each mapped
+   targeted hit's trusted normalized `sourceUrl` when present. All hostnames
+   present across the mapped hits must agree on exactly one ServiceNow
+   hostname, and at least one such hostname must establish the expected
+   instance. Compare that hostname with the configured ServiceNow MCP instance
+   URL whenever the configuration is visible. If the running MCP instance
+   cannot be inspected programmatically, explicitly ask the maker to confirm
+   that the exact expected hostname matches the ServiceNow instance used by
+   the running MCP server. Do not invent or call an MCP identity tool. If the
+   Graph hostname is missing or inconsistent, the configured hostname differs,
+   or the match cannot be established or confirmed, stop before fetching and
+   direct the maker to run `/connect ServiceNow`, then reconfigure or start the
+   correct server.
+5. Fetch every safely mapped record through ServiceNow MCP. Use exactly one of
+   these projections:
 
 ```text
 get_record(
@@ -181,9 +205,15 @@ query_table(
 )
 ```
 
-Ground and generate only after canonical MCP content fetches complete. The
-Graph results are the bounded ranked candidate subset; they are not a
-substitute for the canonical full article content returned by ServiceNow MCP.
+After each single or batch fetch, verify that every returned `sys_id` and/or
+`number` used for grounding exactly matches the mapped identifier requested
+for that hit. A missing or mismatched requested identifier is a disclosed
+failed fetch; do not use that record's content for grounding.
+
+Ground and generate only after all required canonical MCP content fetches and
+returned-identifier checks complete. The Graph results are the bounded ranked
+candidate subset; they are not a substitute for the canonical full article
+content returned by ServiceNow MCP.
 
 Never issue blank, unscoped, or broad `kb_knowledge` queries. Never use a
 title-based lookup or title-based fallback. In particular, never broad-search
@@ -200,9 +230,10 @@ Apply these failure boundaries:
   configured server when it already exists.
 - If an unmapped Graph hit is returned, skip it and disclose the skipped hit
   while continuing with the safely mapped subset.
-- If an individual selected record fetch fails, skip it and disclose the
-  failure while continuing with the remaining bounded subset. Do not replace
-  it with a title lookup or a broad query.
+- If an individual required record fetch fails, including a returned-identifier
+  mismatch, skip it and disclose the failure while continuing with the
+  remaining bounded subset. Do not replace it with a title lookup or a broad
+  query.
 
 The vendored curator skill's "Host integration contract" section describes
 resolving paths relative to a curator-package root that the submodule packaging

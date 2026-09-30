@@ -914,13 +914,42 @@ def test_servicenow_host_specialization_preserves_generic_curator_contract() -> 
         "mcp-fetched article bodies are the canonical full-content fetches"
         in normalized_lower
     )
-    assert "setup or authentication mechanics remain the host wrapper's responsibility" in normalized_lower
+    assert "generic search/fetch contract below unchanged" in normalized_lower
+    assert "setup, authentication, and configured mcp instance inspection" in normalized_lower
 
     specialization = normalized_lower.index("host-provided servicenow specialization")
+    classification = normalized_lower.index(
+        "first bounded specialized-search response to classify"
+    )
+    branch_exit = normalized_lower.index(
+        "exit the specialization before servicenow identifier mapping or mcp use"
+    )
+    complete_subset = normalized_lower.index(
+        "every returned hit with a verified safe servicenow identifier"
+    )
+    identity = normalized_lower.index("fail closed on source identity")
     discovery = normalized_lower.index("topic discovery via exploratory query clustering")
     targeted = normalized_lower.index("per-topic targeted grounding")
     generation = normalized_lower.index("generate knowledge q&a cases")
+    assert specialization < classification < branch_exit < complete_subset < identity
     assert specialization < discovery < targeted < generation
+
+    required_guarantees = (
+        "discard that specialized response for grounding",
+        "must not choose a smaller promising subset",
+        "only disclosed unmapped hits and disclosed individual fetch failures",
+        "trusted normalized `sourceurl` values",
+        "must match the configured mcp instance url",
+        "explicitly confirmed by the maker",
+        "stops without fetching",
+        "/connect servicenow",
+        "returned `sys_id` and/or `number`",
+        "exactly match the requested mapped identifier",
+        "mismatch is a disclosed failed fetch",
+        "does not invent or require a separate mcp identity tool",
+    )
+    missing = [term for term in required_guarantees if term not in normalized_lower]
+    assert not missing, f"Missing ServiceNow host guarantees: {missing}"
 
 
 def test_session_options_disable_host_and_production_connections(tmp_path) -> None:

@@ -80,10 +80,37 @@ selection, and MCP-fetched article bodies are the canonical full-content
 fetches used for grounding. Generation must not begin until those canonical
 article bodies have been fetched.
 
+The host may use the first bounded specialized-search response to classify the
+source. A ServiceNow classification, or an ambiguous classification the maker
+confirms is ServiceNow, continues with that response's Graph-ranked results. An
+`other` classification, or an ambiguous classification the maker says is not
+ServiceNow, must discard that specialized response for grounding and exit the
+specialization before ServiceNow identifier mapping or MCP use. That branch
+reruns or continues the generic Search/Fetch contract below unchanged.
+
+For each per-topic targeted top-10-20 result subset in the ServiceNow
+specialization, every returned hit with a verified safe ServiceNow identifier
+is selected and must be fetched before generation. The host must not choose a
+smaller promising subset from titles or snippets. Only disclosed unmapped hits
+and disclosed individual fetch failures may be omitted.
+
+Before any MCP record fetch, the host must fail closed on source identity: all
+trusted normalized `sourceUrl` values present across the mapped targeted hits
+must agree on one expected ServiceNow hostname, with at least one hostname
+present to establish the instance. That hostname must match the configured MCP
+instance URL when visible or be explicitly confirmed by the maker as the exact
+hostname used by the running MCP server. If the identity is missing,
+inconsistent, different, or unconfirmed, the host stops without fetching and
+gives `/connect ServiceNow` reconfiguration or server-start guidance. After
+each fetch, the returned `sys_id` and/or `number` used for grounding must
+exactly match the requested mapped identifier; a mismatch is a disclosed failed
+fetch and its content is not grounded.
+
 This specialization does not change the generic Search/Fetch contract below,
 the local-file flow, topic confirmation, bounded discovery and targeted-search
-rules, or fetch-failure disclosure. Setup or authentication mechanics remain
-the host wrapper's responsibility; this vendored body does not duplicate them.
+rules, or fetch-failure disclosure. Setup, authentication, and configured MCP
+instance inspection remain the host wrapper's responsibility; this vendored
+body does not invent or require a separate MCP identity tool.
 
 When `hostLifecycleHandoff` is present, complete validation and any
 user-approved fixes, then return this structured handoff:

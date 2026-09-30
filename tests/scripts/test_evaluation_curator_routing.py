@@ -17,6 +17,11 @@ def _section(text: str, start: str, end: str) -> str:
     return text[text.index(start) : text.index(end)]
 
 
+def _assert_terms(text: str, *terms: str) -> None:
+    missing = [term for term in terms if term not in text]
+    assert not missing, f"Missing contract terms: {missing}"
+
+
 def test_dispatcher_routes_local_knowledge_before_topic_matching():
     dispatcher = _read("src/skills/evaluations/dispatcher/SKILL.md")
     normalized = " ".join(dispatcher.split()).lower()
@@ -77,23 +82,30 @@ def test_curator_wrapper_defines_bounded_servicenow_retrieval_sequence():
     resolver = normalized.index("scripts/resolve_kb_connection.py")
     confirmation = normalized_lower.index("maker's confirmation or choice")
     graph_search = normalized.index("scripts/search_connected_kb.py")
-    classification = normalized_lower.index("canonical graph metadata classification")
-    safe_mapping = normalized_lower.index("safe `sys_id`/article-number identifiers")
+    classification = normalized_lower.index("first bounded cli response")
+    safe_mapping = normalized_lower.index("verified safe `sys_id` or article-number")
+    identity_check = normalized_lower.index("fail-closed source identity check")
     mcp_fetch = normalized.index('get_record( table="kb_knowledge"')
     grounding = normalized_lower.index(
-        "ground and generate only after canonical mcp content fetches"
+        "ground and generate only after all required canonical mcp content fetches"
     )
 
     assert resolver < confirmation < graph_search < classification
-    assert classification < safe_mapping < mcp_fetch < grounding
-    assert '--connection "{CONFIRMED_CONNECTION_REFERENCE}"' in wrapper
-    assert '--query "{BOUNDED_QUERY}"' in wrapper
-    assert '--limit "{BOUNDED_LIMIT}"' in wrapper
-    assert "parse only the cli's deterministic json" in normalized_lower
-    assert "3-5 broad queries" in normalized_lower
-    assert "top 5-10 results" in normalized_lower
-    assert "one targeted query" in normalized_lower
-    assert "top 10-20 results" in normalized_lower
+    assert classification < safe_mapping < identity_check < mcp_fetch < grounding
+    _assert_terms(
+        wrapper,
+        '--connection "{CONFIRMED_CONNECTION_REFERENCE}"',
+        '--query "{BOUNDED_QUERY}"',
+        '--limit "{BOUNDED_LIMIT}"',
+    )
+    _assert_terms(
+        normalized_lower,
+        "parse only the cli's deterministic json",
+        "3-5 broad queries",
+        "top 5-10 results",
+        "one targeted query",
+        "top 10-20 results",
+    )
 
     exact_fields = (
         "sys_id,number,short_description,text,"
@@ -104,42 +116,113 @@ def test_curator_wrapper_defines_bounded_servicenow_retrieval_sequence():
     assert "limit={MAPPED_NUMBER_COUNT}" in wrapper
 
 
-def test_curator_wrapper_classifies_servicenow_and_forbids_broad_fallbacks():
+def test_curator_wrapper_branches_before_mapping_or_mcp():
     normalized = _normalized("src/skills/evaluations/curate/SKILL.md")
     normalized_lower = normalized.lower()
 
-    assert "classification is `ambiguous`" in normalized_lower
-    assert "confirm it is servicenow before any mcp use" in normalized_lower
-    assert "classification is `other`" in normalized_lower
-    assert "generic connected-kb flow" in normalized_lower
-    assert "blank" in normalized_lower
-    assert "unscoped" in normalized_lower
-    assert "broad `kb_knowledge` queries" in normalized_lower
-    assert "title-based lookup" in normalized_lower
-    assert "title-based fallback" in normalized_lower
-    assert "never broad-search servicenow as a fallback" in normalized_lower
+    classification = normalized_lower.index("first bounded cli response")
+    branch_boundary = normalized_lower.index(
+        "classification must be resolved before identifier mapping"
+    )
+    mapping = normalized_lower.index("verified safe `sys_id` or article-number")
+    mcp = normalized_lower.index("before any servicenow mcp record fetch")
+
+    assert classification < branch_boundary < mapping < mcp
+    _assert_terms(
+        normalized_lower,
+        "classification is `servicenow`",
+        "classification is `ambiguous`",
+        "maker-confirmed servicenow",
+        "classification is `other`",
+        "discard the shim response for grounding",
+        "exit this specialization before identifier mapping",
+        "generic search/fetch contract unchanged",
+        "do not map servicenow identifiers",
+        "or invoke servicenow mcp on this branch",
+    )
+
+
+def test_curator_wrapper_fetches_every_safely_mapped_targeted_hit():
+    normalized = _normalized("src/skills/evaluations/curate/SKILL.md").lower()
+
+    _assert_terms(
+        normalized,
+        "each targeted top-10-20 graph result subset",
+        "map every returned hit",
+        "every such safely mapped hit is selected and must be fetched",
+        "do not choose a smaller or more promising subset",
+        "only a disclosed unmapped hit or a disclosed individual fetch failure",
+    )
+
+
+def test_curator_wrapper_verifies_servicenow_instance_and_fetch_identity():
+    normalized = _normalized("src/skills/evaluations/curate/SKILL.md").lower()
+
+    identity = normalized.index("fail-closed source identity check")
+    fetch = normalized.index('get_record( table="kb_knowledge"')
+    returned_identity = normalized.index("after each single or batch fetch")
+    grounding = normalized.index(
+        "ground and generate only after all required canonical mcp content fetches"
+    )
+
+    assert identity < fetch < returned_identity < grounding
+    _assert_terms(
+        normalized,
+        "trusted normalized `sourceurl`",
+        "exactly one servicenow hostname",
+        "configured servicenow mcp instance url",
+        "cannot be inspected programmatically",
+        "ask the maker to confirm",
+        "do not invent or call an mcp identity tool",
+        "stop before fetching",
+        "/connect servicenow",
+        "returned `sys_id` and/or `number`",
+        "exactly matches the mapped identifier requested",
+        "mismatched requested identifier",
+        "do not use that record's content for grounding",
+    )
+
+
+def test_curator_wrapper_forbids_broad_servicenow_fallbacks():
+    normalized_lower = _normalized(
+        "src/skills/evaluations/curate/SKILL.md"
+    ).lower()
+
+    _assert_terms(
+        normalized_lower,
+        "blank",
+        "unscoped",
+        "broad `kb_knowledge` queries",
+        "title-based lookup",
+        "title-based fallback",
+        "never broad-search servicenow as a fallback",
+    )
 
 
 def test_curator_wrapper_documents_servicenow_failure_boundaries():
     normalized = _normalized("src/skills/evaluations/curate/SKILL.md")
     normalized_lower = normalized.lower()
 
-    assert "graph search, authentication, permission, transport, or malformed-response failure" in normalized_lower
-    assert "restart in local-file mode" in normalized_lower
-    assert "missing, stopped, or unauthenticated servicenow mcp" in normalized_lower
-    assert "/connect servicenow" in normalized_lower
-    assert "start or fix the configured server" in normalized_lower
-    assert "unmapped graph hit" in normalized_lower
-    assert "skip it and disclose" in normalized_lower
-    assert "individual selected record fetch fails" in normalized_lower
-    assert "remaining bounded subset" in normalized_lower
+    _assert_terms(
+        normalized_lower,
+        "graph search, authentication, permission, transport, or malformed-response failure",
+        "restart in local-file mode",
+        "missing, stopped, or unauthenticated servicenow mcp",
+        "/connect servicenow",
+        "start or fix the configured server",
+        "unmapped graph hit",
+        "skip it and disclose",
+        "individual required record fetch fails",
+        "returned-identifier mismatch",
+        "remaining bounded subset",
+    )
 
 
 def test_curator_wrapper_preserves_local_and_generic_connected_kb_flows():
     normalized = _normalized("src/skills/evaluations/curate/SKILL.md").lower()
 
     assert "skip that gate entirely in local-file mode" in normalized
-    assert "remain on the generic connected-kb flow" in normalized
+    assert "generic search/fetch contract unchanged" in normalized
     assert "local-file and non-servicenow connected-kb flows remain unchanged" in normalized
     assert "maker kit validation" in normalized
     assert "promotion" in normalized
