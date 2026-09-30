@@ -22,7 +22,9 @@ _ARTICLE_NUMBER_KEYS = frozenset(
     {"number", "article_number", "articlenumber", "kb_number", "kbnumber"}
 )
 _URL_KEYS = frozenset({"url", "source_url", "sourceurl", "web_url", "weburl"})
-_SERVICENOW_CONNECTOR_IDS = frozenset({"servicenowknowledge"})
+_SERVICENOW_CONNECTOR_ID = (
+    "/providers/Microsoft.PowerApps/apis/shared_service-now".casefold()
+)
 _MISSING_IDENTIFIER_REASON = "No verified ServiceNow identifier found."
 
 
@@ -131,7 +133,7 @@ def classify_graph_connection(connection: Any) -> ConnectionClassification:
         normalized_connector_id = connector_id.strip()
         folded_connector_id = normalized_connector_id.casefold()
         evidence = (f"connectorId={normalized_connector_id}",)
-        if folded_connector_id in _SERVICENOW_CONNECTOR_IDS:
+        if folded_connector_id == _SERVICENOW_CONNECTOR_ID:
             return ConnectionClassification("servicenow", evidence)
         if "servicenow" not in folded_connector_id:
             return ConnectionClassification("other", evidence)

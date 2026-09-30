@@ -249,7 +249,31 @@ def test_malformed_hit_rows_are_ignored_without_guessing() -> None:
     assert hits[0].service_now_identifier is None
 
 
-def test_classifies_verified_servicenow_connector_metadata() -> None:
+@pytest.mark.parametrize(
+    "connector_id",
+    [
+        "/providers/Microsoft.PowerApps/apis/shared_service-now",
+        " /PROVIDERS/MICROSOFT.POWERAPPS/APIS/SHARED_SERVICE-NOW ",
+    ],
+)
+def test_classifies_verified_servicenow_connector_metadata(
+    connector_id: str,
+) -> None:
+    classification = classify_graph_connection(
+        graph.external_connection(
+            connector_id=connector_id,
+            name="HR knowledge",
+            description="Employee articles",
+        )
+    )
+
+    assert classification == ConnectionClassification(
+        kind="servicenow",
+        evidence=(f"connectorId={connector_id.strip()}",),
+    )
+
+
+def test_guessed_servicenow_gallery_id_is_only_ambiguous() -> None:
     classification = classify_graph_connection(
         graph.external_connection(
             connector_id="serviceNowKnowledge",
@@ -259,7 +283,7 @@ def test_classifies_verified_servicenow_connector_metadata() -> None:
     )
 
     assert classification == ConnectionClassification(
-        kind="servicenow",
+        kind="ambiguous",
         evidence=("connectorId=serviceNowKnowledge",),
     )
 
