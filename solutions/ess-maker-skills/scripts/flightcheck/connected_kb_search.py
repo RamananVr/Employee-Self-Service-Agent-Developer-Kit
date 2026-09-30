@@ -16,7 +16,8 @@ _SYS_ID_KEYS = frozenset({"sys_id", "sysid"})
 _ARTICLE_NUMBER_KEYS = frozenset(
     {"number", "article_number", "articlenumber", "kb_number", "kbnumber"}
 )
-_URL_KEYS = frozenset({"url", "source_url", "sourceurl", "web_url", "weburl"})
+_URL_ALIAS_PRECEDENCE = ("url", "source_url", "sourceurl", "web_url", "weburl")
+_URL_KEYS = frozenset(_URL_ALIAS_PRECEDENCE)
 _URL_SYS_ID_QUERY_KEYS = frozenset({"sys_id", "sysparm_sys_id"})
 _URL_ARTICLE_NUMBER_QUERY_KEYS = frozenset(
     {"sysparm_article", "article_number", "number"}
@@ -67,7 +68,7 @@ def normalize_external_item_hits(payload: Any) -> list[RankedExternalItem]:
         return []
 
     normalized: list[RankedExternalItem] = []
-    seen_identifiers: set[tuple[str, str]] = set()
+    seen_identifier_hosts: set[tuple[str, str, str]] = set()
 
     for response in value:
         if not isinstance(response, Mapping):
@@ -87,10 +88,12 @@ def normalize_external_item_hits(payload: Any) -> list[RankedExternalItem]:
                 item = _normalize_hit(hit)
                 identifier = item.service_now_identifier
                 if identifier is not None:
-                    canonical = (identifier.kind, identifier.value)
-                    if canonical in seen_identifiers:
-                        continue
-                    seen_identifiers.add(canonical)
+                    hostname = _source_hostname_evidence(hit)
+                    if hostname is not None:
+                        canonical = (identifier.kind, identifier.value, hostname)
+                        if canonical in seen_identifier_hosts:
+                            continue
+                        seen_identifier_hosts.add(canonical)
                 normalized.append(item)
 
     return normalized
@@ -179,9 +182,13 @@ def _normalize_hit(hit: Mapping[str, Any]) -> RankedExternalItem:
     return RankedExternalItem(
         rank=rank,
         hit_id=_string_value(hit.get("hitId")),
-        title=_resource_text(resource_mapping, properties, {"title"}),
+        title=_resource_text(resource_mapping, properties, ("title",)),
         summary=_string_value(hit.get("summary")),
-        source_url=_resource_text(resource_mapping, properties, _URL_KEYS),
+        source_url=_resource_text(
+            resource_mapping,
+            properties,
+            _URL_ALIAS_PRECEDENCE,
+        ),
         properties=properties,
         service_now_identifier=identifier,
         skip_reason=None if identifier is not None else _MISSING_IDENTIFIER_REASON,
@@ -191,20 +198,54 @@ def _normalize_hit(hit: Mapping[str, Any]) -> RankedExternalItem:
 def _resource_text(
     resource: Mapping[str, Any],
     properties: Mapping[str, Any],
-    aliases: set[str] | frozenset[str],
+    aliases: Iterable[str],
 ) -> str:
-    for mapping in (resource, properties):
-        value = _first_alias_value(mapping, aliases)
-        if isinstance(value, str):
-            return value.strip()
+    for alias in aliases:
+        for mapping in (resource, properties):
+            for key, value in mapping.items():
+                if (
+                    isinstance(key, str)
+                    and key.casefold() == alias
+                    and isinstance(value, str)
+                    and value.strip()
+                ):
+                    return value.strip()
     return ""
 
 
-def _first_alias_value(
-    mapping: Mapping[str, Any],
-    aliases: set[str] | frozenset[str],
-) -> Any:
-    return next(_alias_values(mapping, aliases), None)
+def _source_hostname_evidence(hit: Mapping[str, Any]) -> str | None:
+    resource = hit.get("resource")
+    if not isinstance(resource, Mapping):
+        return None
+    properties = resource.get("properties")
+    mappings = [
+        resource,
+        properties if isinstance(properties, Mapping) else {},
+    ]
+
+    hostnames: set[str] = set()
+    found_url = False
+    for value in _alias_values_from_mappings(mappings, _URL_KEYS):
+        if not isinstance(value, str) or not value.strip():
+            continue
+        found_url = True
+        try:
+            parsed = urlsplit(value.strip())
+            hostname = parsed.hostname
+        except ValueError:
+            return None
+        if (
+            parsed.scheme.casefold() not in {"http", "https"}
+            or not parsed.netloc
+            or not hostname
+            or not _is_servicenow_hostname(hostname)
+        ):
+            return None
+        hostnames.add(hostname.casefold().rstrip("."))
+
+    if not found_url or len(hostnames) != 1:
+        return None
+    return next(iter(hostnames))
 
 
 def _alias_values(

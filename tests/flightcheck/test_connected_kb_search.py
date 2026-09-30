@@ -240,13 +240,22 @@ def test_does_not_derive_identifier_from_opaque_hit_id_title_or_summary() -> Non
     assert hit.skip_reason == "No verified ServiceNow identifier found."
 
 
-def test_deduplicates_by_canonical_identifier_preserving_first_ranked_hit() -> None:
+def test_deduplicates_same_identifier_and_host_preserving_first_ranked_hit() -> None:
     payload = graph.external_item_search_response(
         hits=[
             graph.search_hit(
                 hit_id="first",
                 rank=1,
-                resource={"properties": {"title": "First", "sys_id": SYS_ID}},
+                resource={
+                    "properties": {
+                        "title": "First",
+                        "sys_id": SYS_ID,
+                        "url": (
+                            "https://example.service-now.com/kb_view.do"
+                            f"?sys_id={SYS_ID}"
+                        ),
+                    }
+                },
             ),
             graph.search_hit(
                 hit_id="duplicate",
@@ -255,6 +264,10 @@ def test_deduplicates_by_canonical_identifier_preserving_first_ranked_hit() -> N
                     "properties": {
                         "title": "Duplicate",
                         "sysId": SYS_ID.upper(),
+                        "sourceUrl": (
+                            "https://EXAMPLE.SERVICE-NOW.COM/kb_view.do"
+                            f"?sys_id={SYS_ID}"
+                        ),
                     }
                 },
             ),
@@ -275,6 +288,148 @@ def test_deduplicates_by_canonical_identifier_preserving_first_ranked_hit() -> N
 
     assert [hit.hit_id for hit in hits] == ["first", "distinct"]
     assert [hit.rank for hit in hits] == [1, 3]
+
+
+@pytest.mark.parametrize(
+    "second_url",
+    [
+        f"https://other.service-now.com/kb_view.do?sys_id={SYS_ID}",
+        None,
+        "not-a-valid-url",
+    ],
+)
+def test_preserves_same_identifier_with_untrusted_host_evidence(
+    second_url: str | None,
+) -> None:
+    first_url = f"https://example.service-now.com/kb_view.do?sys_id={SYS_ID}"
+    second_properties: dict[str, object] = {
+        "title": "Second",
+        "sys_id": SYS_ID,
+    }
+    if second_url is not None:
+        second_properties["url"] = second_url
+    payload = graph.external_item_search_response(
+        hits=[
+            graph.search_hit(
+                hit_id="first",
+                rank=1,
+                resource={
+                    "properties": {
+                        "title": "First",
+                        "sys_id": SYS_ID,
+                        "url": first_url,
+                    }
+                },
+            ),
+            graph.search_hit(
+                hit_id="second",
+                rank=2,
+                resource={"properties": second_properties},
+            ),
+        ]
+    )
+
+    hits = normalize_external_item_hits(payload)
+
+    assert [hit.hit_id for hit in hits] == ["first", "second"]
+
+
+def test_blank_url_alias_uses_valid_source_url_for_identifier_and_output() -> None:
+    source_url = f"https://example.service-now.com/kb_view.do?sys_id={SYS_ID}"
+    payload = graph.external_item_search_response(
+        hits=[
+            graph.search_hit(
+                hit_id="blank-url",
+                resource={
+                    "url": "  ",
+                    "properties": {
+                        "title": "Article",
+                        "sourceUrl": source_url,
+                    }
+                },
+            )
+        ]
+    )
+
+    hit = normalize_external_item_hits(payload)[0]
+
+    assert hit.source_url == source_url
+    assert hit.service_now_identifier == ServiceNowIdentifier("sys_id", SYS_ID)
+
+
+def test_preserves_same_identifier_with_ambiguous_host_evidence() -> None:
+    first_url = f"https://example.service-now.com/kb_view.do?sys_id={SYS_ID}"
+    payload = graph.external_item_search_response(
+        hits=[
+            graph.search_hit(
+                hit_id="first",
+                resource={
+                    "properties": {
+                        "sys_id": SYS_ID,
+                        "url": first_url,
+                    }
+                },
+            ),
+            graph.search_hit(
+                hit_id="ambiguous",
+                resource={
+                    "properties": {
+                        "sys_id": SYS_ID,
+                        "url": first_url,
+                        "sourceUrl": (
+                            "https://other.service-now.com/kb_view.do"
+                            f"?sys_id={SYS_ID}"
+                        ),
+                    }
+                },
+            ),
+        ]
+    )
+
+    hits = normalize_external_item_hits(payload)
+
+    assert [hit.hit_id for hit in hits] == ["first", "ambiguous"]
+
+
+def test_null_url_alias_uses_valid_root_source_url() -> None:
+    source_url = "https://example.servicenow.com/kb/KB0012345"
+    payload = graph.external_item_search_response(
+        hits=[
+            graph.search_hit(
+                hit_id="null-url",
+                resource={
+                    "url": None,
+                    "sourceUrl": source_url,
+                    "properties": {"title": "Article"},
+                },
+            )
+        ]
+    )
+
+    hit = normalize_external_item_hits(payload)[0]
+
+    assert hit.source_url == source_url
+    assert hit.service_now_identifier == ServiceNowIdentifier(
+        "number", "KB0012345"
+    )
+
+
+def test_blank_root_title_uses_non_empty_property_title() -> None:
+    payload = graph.external_item_search_response(
+        hits=[
+            graph.search_hit(
+                resource={
+                    "title": "",
+                    "properties": {
+                        "title": "Property title",
+                        "sys_id": SYS_ID,
+                    },
+                }
+            )
+        ]
+    )
+
+    assert normalize_external_item_hits(payload)[0].title == "Property title"
 
 
 def test_missing_identifier_remains_with_stable_skip_reason() -> None:
