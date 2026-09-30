@@ -110,27 +110,19 @@ def extract_servicenow_identifier(resource: Any) -> ServiceNowIdentifier | None:
         properties if isinstance(properties, Mapping) else {},
     ]
 
-    sys_id_resolution = _resolve_identifier_candidates(
-        _alias_values_from_mappings(mappings, _SYS_ID_KEYS),
-        _normalize_sys_id,
+    sys_id_values = list(_alias_values_from_mappings(mappings, _SYS_ID_KEYS))
+    article_number_values = list(
+        _alias_values_from_mappings(mappings, _ARTICLE_NUMBER_KEYS)
     )
-    if sys_id_resolution.conflicted:
-        return None
-    if sys_id_resolution.identifier is not None:
-        return sys_id_resolution.identifier
+    for value in _alias_values_from_mappings(mappings, _URL_KEYS):
+        url_sys_ids, url_article_numbers = _servicenow_url_identifier_values(value)
+        sys_id_values.extend(url_sys_ids)
+        article_number_values.extend(url_article_numbers)
 
-    article_resolution = _resolve_identifier_candidates(
-        _alias_values_from_mappings(mappings, _ARTICLE_NUMBER_KEYS),
-        _normalize_article_number,
-    )
-    if article_resolution.conflicted:
+    resolution = _resolve_identifier_sources(sys_id_values, article_number_values)
+    if resolution.conflicted:
         return None
-    if article_resolution.identifier is not None:
-        return article_resolution.identifier
-
-    return _resolve_url_aliases(
-        _alias_values_from_mappings(mappings, _URL_KEYS)
-    ).identifier
+    return resolution.identifier
 
 
 def classify_graph_connection(connection: Any) -> ConnectionClassification:
@@ -297,72 +289,62 @@ def _normalize_article_number(value: Any) -> ServiceNowIdentifier | None:
     return ServiceNowIdentifier("number", candidate.upper())
 
 
-def _resolve_servicenow_url_identifier(value: Any) -> _IdentifierResolution:
+def _servicenow_url_identifier_values(value: Any) -> tuple[list[Any], list[Any]]:
     if not isinstance(value, str):
-        return _IdentifierResolution()
+        return [], []
     source_url = value.strip()
     if not source_url:
-        return _IdentifierResolution()
+        return [], []
 
     try:
         parsed = urlsplit(source_url)
         hostname = parsed.hostname
     except ValueError:
-        return _IdentifierResolution()
-    if not hostname or not _is_servicenow_hostname(hostname):
-        return _IdentifierResolution()
+        return [], []
+    if (
+        parsed.scheme.casefold() not in {"http", "https"}
+        or not parsed.netloc
+        or not hostname
+        or not _is_servicenow_hostname(hostname)
+    ):
+        return [], []
 
     query_pairs = parse_qsl(parsed.query, keep_blank_values=True)
     path_segments = [unquote(segment) for segment in parsed.path.split("/")]
 
+    return (
+        [
+            query_value
+            for query_key, query_value in query_pairs
+            if query_key.casefold() in _URL_SYS_ID_QUERY_KEYS
+        ]
+        + path_segments,
+        [
+            query_value
+            for query_key, query_value in query_pairs
+            if query_key.casefold() in _URL_ARTICLE_NUMBER_QUERY_KEYS
+        ]
+        + path_segments,
+    )
+
+
+def _resolve_identifier_sources(
+    sys_id_values: Iterable[Any],
+    article_number_values: Iterable[Any],
+) -> _IdentifierResolution:
     sys_id_resolution = _resolve_identifier_candidates(
-        (
-            [
-                query_value
-                for query_key, query_value in query_pairs
-                if query_key.casefold() in _URL_SYS_ID_QUERY_KEYS
-            ]
-            + path_segments
-        ),
+        sys_id_values,
         _normalize_sys_id,
     )
-    if sys_id_resolution.conflicted or sys_id_resolution.identifier is not None:
-        return sys_id_resolution
-
-    return _resolve_identifier_candidates(
-        (
-            [
-                query_value
-                for query_key, query_value in query_pairs
-                if query_key.casefold() in _URL_ARTICLE_NUMBER_QUERY_KEYS
-            ]
-            + path_segments
-        ),
+    article_resolution = _resolve_identifier_candidates(
+        article_number_values,
         _normalize_article_number,
     )
-
-
-def _resolve_url_aliases(values: Iterable[Any]) -> _IdentifierResolution:
-    resolutions = [_resolve_servicenow_url_identifier(value) for value in values]
-    if any(resolution.conflicted for resolution in resolutions):
+    if sys_id_resolution.conflicted or article_resolution.conflicted:
         return _IdentifierResolution(conflicted=True)
-
-    identifiers = [
-        resolution.identifier
-        for resolution in resolutions
-        if resolution.identifier is not None
-    ]
-    sys_id_resolution = _resolve_identifier_candidates(
-        (identifier.value for identifier in identifiers if identifier.kind == "sys_id"),
-        _normalize_sys_id,
-    )
-    if sys_id_resolution.conflicted or sys_id_resolution.identifier is not None:
+    if sys_id_resolution.identifier is not None:
         return sys_id_resolution
-
-    return _resolve_identifier_candidates(
-        (identifier.value for identifier in identifiers if identifier.kind == "number"),
-        _normalize_article_number,
-    )
+    return article_resolution
 
 
 def _is_servicenow_hostname(hostname: str) -> bool:

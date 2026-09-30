@@ -18,6 +18,7 @@ from tests.mocks import graph
 
 
 SYS_ID = "0123456789abcdef0123456789abcdef"
+OTHER_SYS_ID = "fedcba9876543210fedcba9876543210"
 
 
 def test_normalize_search_hits_preserves_ranked_metadata() -> None:
@@ -196,6 +197,43 @@ def test_conflicting_root_and_property_sys_ids_fail_closed() -> None:
     assert extract_servicenow_identifier(resource) is None
 
 
+def test_conflicting_direct_and_url_sys_ids_fail_closed() -> None:
+    resource = {
+        "sys_id": SYS_ID,
+        "sourceUrl": (
+            "https://example.service-now.com/kb_view.do"
+            f"?sys_id={OTHER_SYS_ID}"
+        ),
+    }
+
+    assert extract_servicenow_identifier(resource) is None
+
+
+def test_equivalent_normalized_direct_and_url_sys_ids_are_accepted() -> None:
+    resource = {
+        "SYS_ID": SYS_ID.upper(),
+        "sourceUrl": (
+            "https://example.service-now.com/kb_view.do"
+            f"?sys_id={SYS_ID}"
+        ),
+    }
+
+    assert extract_servicenow_identifier(resource) == ServiceNowIdentifier(
+        "sys_id", SYS_ID
+    )
+
+
+def test_invalid_servicenow_url_does_not_conflict_with_direct_sys_id() -> None:
+    resource = {
+        "sys_id": SYS_ID,
+        "sourceUrl": f"ftp://example.service-now.com/kb/{OTHER_SYS_ID}",
+    }
+
+    assert extract_servicenow_identifier(resource) == ServiceNowIdentifier(
+        "sys_id", SYS_ID
+    )
+
+
 def test_conflicting_article_numbers_fail_closed() -> None:
     resource = {
         "number": "KB0012345",
@@ -204,6 +242,49 @@ def test_conflicting_article_numbers_fail_closed() -> None:
     }
 
     assert extract_servicenow_identifier(resource) is None
+
+
+def test_conflicting_direct_and_url_article_numbers_fail_closed() -> None:
+    resource = {
+        "number": "KB0012345",
+        "webUrl": (
+            "https://example.servicenow.com/kb_view.do"
+            "?sysparm_article=KB0076543"
+        ),
+    }
+
+    assert extract_servicenow_identifier(resource) is None
+
+
+def test_equivalent_normalized_direct_and_url_article_numbers_are_accepted() -> None:
+    resource = {
+        "article_number": " kb0012345 ",
+        "webUrl": (
+            "https://example.servicenow.com/kb_view.do"
+            "?sysparm_article=KB0012345"
+        ),
+    }
+
+    assert extract_servicenow_identifier(resource) == ServiceNowIdentifier(
+        "number", "KB0012345"
+    )
+
+
+def test_consistent_direct_and_url_identifiers_preserve_sys_id_priority() -> None:
+    resource = {
+        "sysId": SYS_ID,
+        "number": "KB0012345",
+        "properties": {
+            "sourceUrl": (
+                "https://example.service-now.com/kb_view.do"
+                f"?sys_id={SYS_ID}&sysparm_article=KB0012345"
+            )
+        },
+    }
+
+    assert extract_servicenow_identifier(resource) == ServiceNowIdentifier(
+        "sys_id", SYS_ID
+    )
 
 
 def test_article_aliases_ignore_invalid_and_accept_equivalent_values() -> None:
@@ -389,6 +470,43 @@ def test_preserves_same_identifier_with_ambiguous_host_evidence() -> None:
     hits = normalize_external_item_hits(payload)
 
     assert [hit.hit_id for hit in hits] == ["first", "ambiguous"]
+
+
+def test_conflicted_hit_is_not_deduplicated_by_inconsistent_source_host() -> None:
+    first_url = f"https://example.service-now.com/kb_view.do?sys_id={SYS_ID}"
+    payload = graph.external_item_search_response(
+        hits=[
+            graph.search_hit(
+                hit_id="first",
+                rank=1,
+                resource={
+                    "properties": {
+                        "sys_id": SYS_ID,
+                        "url": first_url,
+                    }
+                },
+            ),
+            graph.search_hit(
+                hit_id="conflicted",
+                rank=2,
+                resource={
+                    "properties": {
+                        "sys_id": SYS_ID,
+                        "url": (
+                            "https://example.service-now.com/kb_view.do"
+                            f"?sys_id={OTHER_SYS_ID}"
+                        ),
+                    }
+                },
+            ),
+        ]
+    )
+
+    hits = normalize_external_item_hits(payload)
+
+    assert [hit.hit_id for hit in hits] == ["first", "conflicted"]
+    assert hits[1].service_now_identifier is None
+    assert hits[1].skip_reason == "No verified ServiceNow identifier found."
 
 
 def test_null_url_alias_uses_valid_root_source_url() -> None:
