@@ -93,29 +93,61 @@ def test_prefers_explicit_sys_id_over_article_number() -> None:
     )
 
 
-def test_extracts_sys_id_from_servicenow_source_url() -> None:
-    resource = {
-        "properties": {
-            "sourceUrl": (
-                "https://example.service-now.com/now/nav/ui/classic/params/"
-                f"target/kb_knowledge.do%3Fsys_id%3D{SYS_ID.upper()}"
-            )
-        }
-    }
+@pytest.mark.parametrize(
+    "url",
+    [
+        f"https://example.service-now.com/kb_view.do?sys_id={SYS_ID.upper()}",
+        f"https://example.service-now.com/kb_view.do?SYSPARM_SYS_ID={SYS_ID}",
+        f"https://example.servicenow.com/api/now/table/kb_knowledge/{SYS_ID}",
+        f"https://example.service-now.com/kb/{SYS_ID.upper()}/details",
+    ],
+)
+def test_extracts_sys_id_from_supported_servicenow_url_forms(url: str) -> None:
+    resource = {"properties": {"sourceUrl": url}}
 
     assert extract_servicenow_identifier(resource) == ServiceNowIdentifier(
         "sys_id", SYS_ID
     )
 
 
-def test_extracts_article_number_from_recognized_servicenow_url() -> None:
-    resource = {
-        "webUrl": "https://example.servicenow.com/kb_view.do?sysparm_article=kb0012345"
-    }
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://example.servicenow.com/kb_view.do?sysparm_article=kb0012345",
+        "https://example.servicenow.com/kb_view.do?ARTICLE_NUMBER=kb0012345",
+        "https://example.service-now.com/kb/KB0012345",
+    ],
+)
+def test_extracts_article_number_from_supported_servicenow_url_forms(
+    url: str,
+) -> None:
+    resource = {"webUrl": url}
 
     assert extract_servicenow_identifier(resource) == ServiceNowIdentifier(
         "number", "KB0012345"
     )
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://example.service-now.com/kb?q=KB0012345",
+        (
+            "https://example.service-now.com/nav?"
+            "target=https%3A%2F%2Fexample.service-now.com%2Fkb_view.do"
+            "%3Fsysparm_article%3DKB0012345"
+        ),
+        "https://example.service-now.com/kb#KB0012345",
+        (
+            "https://example.service-now.com/now/nav/ui/classic/params/"
+            f"target/kb_knowledge.do%3Fsys_id%3D{SYS_ID}"
+        ),
+    ],
+)
+def test_rejects_identifiers_from_untrusted_servicenow_url_locations(
+    url: str,
+) -> None:
+    assert extract_servicenow_identifier({"url": url}) is None
 
 
 @pytest.mark.parametrize(
@@ -130,6 +162,60 @@ def test_extracts_article_number_from_recognized_servicenow_url() -> None:
 )
 def test_rejects_malformed_sys_id(resource: dict[str, object]) -> None:
     assert extract_servicenow_identifier(resource) is None
+
+
+def test_invalid_alias_before_valid_alias_accepts_valid_candidate() -> None:
+    resource = {
+        "sys_id": "invalid",
+        "sysId": SYS_ID,
+    }
+
+    assert extract_servicenow_identifier(resource) == ServiceNowIdentifier(
+        "sys_id", SYS_ID
+    )
+
+
+def test_duplicate_equivalent_alias_values_are_accepted() -> None:
+    resource = {
+        "SYS_ID": SYS_ID.upper(),
+        "properties": {"sysId": f" {SYS_ID} "},
+    }
+
+    assert extract_servicenow_identifier(resource) == ServiceNowIdentifier(
+        "sys_id", SYS_ID
+    )
+
+
+def test_conflicting_root_and_property_sys_ids_fail_closed() -> None:
+    resource = {
+        "sys_id": SYS_ID,
+        "number": "KB0012345",
+        "properties": {"sysId": "fedcba9876543210fedcba9876543210"},
+    }
+
+    assert extract_servicenow_identifier(resource) is None
+
+
+def test_conflicting_article_numbers_fail_closed() -> None:
+    resource = {
+        "number": "KB0012345",
+        "properties": {"articleNumber": "KB0076543"},
+        "url": f"https://example.service-now.com/kb_view.do?sys_id={SYS_ID}",
+    }
+
+    assert extract_servicenow_identifier(resource) is None
+
+
+def test_article_aliases_ignore_invalid_and_accept_equivalent_values() -> None:
+    resource = {
+        "number": "invalid",
+        "article_number": "kb0012345",
+        "properties": {"articleNumber": " KB0012345 "},
+    }
+
+    assert extract_servicenow_identifier(resource) == ServiceNowIdentifier(
+        "number", "KB0012345"
+    )
 
 
 def test_does_not_derive_identifier_from_opaque_hit_id_title_or_summary() -> None:
@@ -288,6 +374,33 @@ def test_guessed_servicenow_gallery_id_is_only_ambiguous() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    "connector_id",
+    [
+        "servicenow",
+        "custom-service-now",
+        "shared_service-now-preview",
+        "custom_service_now",
+        "custom service now",
+    ],
+)
+def test_servicenow_connector_id_text_variants_are_ambiguous(
+    connector_id: str,
+) -> None:
+    classification = classify_graph_connection(
+        graph.external_connection(
+            connector_id=connector_id,
+            name="HR knowledge",
+            description="Employee articles",
+        )
+    )
+
+    assert classification == ConnectionClassification(
+        kind="ambiguous",
+        evidence=(f"connectorId={connector_id}",),
+    )
+
+
 def test_classifies_clear_explicit_non_servicenow_connector_metadata() -> None:
     classification = classify_graph_connection(
         graph.external_connection(
@@ -308,8 +421,13 @@ def test_classifies_clear_explicit_non_servicenow_connector_metadata() -> None:
     [
         ("ServiceNow HR knowledge", "Employee articles", ("name mentions ServiceNow",)),
         (
+            "Service_Now HR knowledge",
+            "Employee articles",
+            ("name mentions ServiceNow",),
+        ),
+        (
             "HR knowledge",
-            "Synced from Service Now",
+            "Synced from Service-Now",
             ("description mentions ServiceNow",),
         ),
     ],

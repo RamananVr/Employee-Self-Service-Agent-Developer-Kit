@@ -6,22 +6,21 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Any, Literal, Mapping
-from urllib.parse import unquote, urlsplit
+from typing import Any, Callable, Iterable, Literal, Mapping
+from urllib.parse import parse_qsl, unquote, urlsplit
 
 _SYS_ID_PATTERN = re.compile(r"^[0-9a-fA-F]{32}$")
 _ARTICLE_NUMBER_PATTERN = re.compile(r"^KB[0-9]{7}$", re.IGNORECASE)
-_SYS_ID_IN_URL_PATTERN = re.compile(r"(?:^|[?&/=_-])([0-9a-fA-F]{32})(?=$|[?&#/=_-])")
-_ARTICLE_NUMBER_IN_URL_PATTERN = re.compile(
-    r"(?<![A-Za-z0-9])KB[0-9]{7}(?![A-Za-z0-9])",
-    re.IGNORECASE,
-)
 
 _SYS_ID_KEYS = frozenset({"sys_id", "sysid"})
 _ARTICLE_NUMBER_KEYS = frozenset(
     {"number", "article_number", "articlenumber", "kb_number", "kbnumber"}
 )
 _URL_KEYS = frozenset({"url", "source_url", "sourceurl", "web_url", "weburl"})
+_URL_SYS_ID_QUERY_KEYS = frozenset({"sys_id", "sysparm_sys_id"})
+_URL_ARTICLE_NUMBER_QUERY_KEYS = frozenset(
+    {"sysparm_article", "article_number", "number"}
+)
 _SERVICENOW_CONNECTOR_ID = (
     "/providers/Microsoft.PowerApps/apis/shared_service-now".casefold()
 )
@@ -50,6 +49,12 @@ class RankedExternalItem:
 class ConnectionClassification:
     kind: Literal["servicenow", "other", "ambiguous"]
     evidence: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class _IdentifierResolution:
+    identifier: ServiceNowIdentifier | None = None
+    conflicted: bool = False
 
 
 def normalize_external_item_hits(payload: Any) -> list[RankedExternalItem]:
@@ -102,25 +107,27 @@ def extract_servicenow_identifier(resource: Any) -> ServiceNowIdentifier | None:
         properties if isinstance(properties, Mapping) else {},
     ]
 
-    for mapping in mappings:
-        candidate = _first_alias_value(mapping, _SYS_ID_KEYS)
-        identifier = _normalize_sys_id(candidate)
-        if identifier is not None:
-            return identifier
+    sys_id_resolution = _resolve_identifier_candidates(
+        _alias_values_from_mappings(mappings, _SYS_ID_KEYS),
+        _normalize_sys_id,
+    )
+    if sys_id_resolution.conflicted:
+        return None
+    if sys_id_resolution.identifier is not None:
+        return sys_id_resolution.identifier
 
-    for mapping in mappings:
-        candidate = _first_alias_value(mapping, _ARTICLE_NUMBER_KEYS)
-        identifier = _normalize_article_number(candidate)
-        if identifier is not None:
-            return identifier
+    article_resolution = _resolve_identifier_candidates(
+        _alias_values_from_mappings(mappings, _ARTICLE_NUMBER_KEYS),
+        _normalize_article_number,
+    )
+    if article_resolution.conflicted:
+        return None
+    if article_resolution.identifier is not None:
+        return article_resolution.identifier
 
-    for mapping in mappings:
-        for source_url in _alias_values(mapping, _URL_KEYS):
-            identifier = _identifier_from_servicenow_url(source_url)
-            if identifier is not None:
-                return identifier
-
-    return None
+    return _resolve_url_aliases(
+        _alias_values_from_mappings(mappings, _URL_KEYS)
+    ).identifier
 
 
 def classify_graph_connection(connection: Any) -> ConnectionClassification:
@@ -128,18 +135,19 @@ def classify_graph_connection(connection: Any) -> ConnectionClassification:
     if not isinstance(connection, Mapping):
         return ConnectionClassification("ambiguous", ())
 
+    evidence: list[str] = []
+    has_servicenow_hint = False
+    has_connector_id = False
     connector_id = connection.get("connectorId")
     if isinstance(connector_id, str) and connector_id.strip():
+        has_connector_id = True
         normalized_connector_id = connector_id.strip()
         folded_connector_id = normalized_connector_id.casefold()
-        evidence = (f"connectorId={normalized_connector_id}",)
+        evidence.append(f"connectorId={normalized_connector_id}")
         if folded_connector_id == _SERVICENOW_CONNECTOR_ID:
-            return ConnectionClassification("servicenow", evidence)
-        if "servicenow" not in folded_connector_id:
-            return ConnectionClassification("other", evidence)
-        return ConnectionClassification("ambiguous", evidence)
+            return ConnectionClassification("servicenow", tuple(evidence))
+        has_servicenow_hint = _mentions_servicenow(normalized_connector_id)
 
-    evidence: list[str] = []
     for field, label in (
         ("name", "name mentions ServiceNow"),
         ("description", "description mentions ServiceNow"),
@@ -147,7 +155,10 @@ def classify_graph_connection(connection: Any) -> ConnectionClassification:
         value = connection.get(field)
         if isinstance(value, str) and _mentions_servicenow(value):
             evidence.append(label)
+            has_servicenow_hint = True
 
+    if has_connector_id and not has_servicenow_hint:
+        return ConnectionClassification("other", tuple(evidence))
     return ConnectionClassification("ambiguous", tuple(evidence))
 
 
@@ -205,6 +216,28 @@ def _alias_values(
             yield value
 
 
+def _alias_values_from_mappings(
+    mappings: Iterable[Mapping[str, Any]],
+    aliases: set[str] | frozenset[str],
+) -> Iterable[Any]:
+    for mapping in mappings:
+        yield from _alias_values(mapping, aliases)
+
+
+def _resolve_identifier_candidates(
+    values: Iterable[Any],
+    normalizer: Callable[[Any], ServiceNowIdentifier | None],
+) -> _IdentifierResolution:
+    identifiers = {
+        identifier
+        for value in values
+        if (identifier := normalizer(value)) is not None
+    }
+    if len(identifiers) > 1:
+        return _IdentifierResolution(conflicted=True)
+    return _IdentifierResolution(next(iter(identifiers), None))
+
+
 def _normalize_sys_id(value: Any) -> ServiceNowIdentifier | None:
     if not isinstance(value, str):
         return None
@@ -223,29 +256,72 @@ def _normalize_article_number(value: Any) -> ServiceNowIdentifier | None:
     return ServiceNowIdentifier("number", candidate.upper())
 
 
-def _identifier_from_servicenow_url(value: Any) -> ServiceNowIdentifier | None:
+def _resolve_servicenow_url_identifier(value: Any) -> _IdentifierResolution:
     if not isinstance(value, str):
-        return None
+        return _IdentifierResolution()
     source_url = value.strip()
     if not source_url:
-        return None
+        return _IdentifierResolution()
 
     try:
-        hostname = urlsplit(source_url).hostname
+        parsed = urlsplit(source_url)
+        hostname = parsed.hostname
     except ValueError:
-        return None
+        return _IdentifierResolution()
     if not hostname or not _is_servicenow_hostname(hostname):
-        return None
+        return _IdentifierResolution()
 
-    decoded_url = unquote(unquote(source_url))
-    sys_id_match = _SYS_ID_IN_URL_PATTERN.search(decoded_url)
-    if sys_id_match:
-        return ServiceNowIdentifier("sys_id", sys_id_match.group(1).lower())
+    query_pairs = parse_qsl(parsed.query, keep_blank_values=True)
+    path_segments = [unquote(segment) for segment in parsed.path.split("/")]
 
-    article_match = _ARTICLE_NUMBER_IN_URL_PATTERN.search(decoded_url)
-    if article_match:
-        return ServiceNowIdentifier("number", article_match.group(0).upper())
-    return None
+    sys_id_resolution = _resolve_identifier_candidates(
+        (
+            [
+                query_value
+                for query_key, query_value in query_pairs
+                if query_key.casefold() in _URL_SYS_ID_QUERY_KEYS
+            ]
+            + path_segments
+        ),
+        _normalize_sys_id,
+    )
+    if sys_id_resolution.conflicted or sys_id_resolution.identifier is not None:
+        return sys_id_resolution
+
+    return _resolve_identifier_candidates(
+        (
+            [
+                query_value
+                for query_key, query_value in query_pairs
+                if query_key.casefold() in _URL_ARTICLE_NUMBER_QUERY_KEYS
+            ]
+            + path_segments
+        ),
+        _normalize_article_number,
+    )
+
+
+def _resolve_url_aliases(values: Iterable[Any]) -> _IdentifierResolution:
+    resolutions = [_resolve_servicenow_url_identifier(value) for value in values]
+    if any(resolution.conflicted for resolution in resolutions):
+        return _IdentifierResolution(conflicted=True)
+
+    identifiers = [
+        resolution.identifier
+        for resolution in resolutions
+        if resolution.identifier is not None
+    ]
+    sys_id_resolution = _resolve_identifier_candidates(
+        (identifier.value for identifier in identifiers if identifier.kind == "sys_id"),
+        _normalize_sys_id,
+    )
+    if sys_id_resolution.conflicted or sys_id_resolution.identifier is not None:
+        return sys_id_resolution
+
+    return _resolve_identifier_candidates(
+        (identifier.value for identifier in identifiers if identifier.kind == "number"),
+        _normalize_article_number,
+    )
 
 
 def _is_servicenow_hostname(hostname: str) -> bool:
@@ -258,7 +334,7 @@ def _is_servicenow_hostname(hostname: str) -> bool:
 
 
 def _mentions_servicenow(value: str) -> bool:
-    return bool(re.search(r"\bservice[\s-]*now\b", value, re.IGNORECASE))
+    return bool(re.search(r"service[\s_-]*now", value, re.IGNORECASE))
 
 
 def _string_value(value: Any) -> str:
