@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Sequence
-import json
 from pathlib import Path
 
 import pytest
@@ -893,6 +892,35 @@ def test_connected_kb_zero_result_topic_generates_no_cases() -> None:
     calls = backend.calls
     assert not any(call.kind == "fetch" for call in calls)
     assert not any(call.kind == "write" for call in calls)
+
+
+def test_servicenow_host_specialization_preserves_generic_curator_contract() -> None:
+    repo_root = Path(__file__).resolve().parents[3]
+    curator = (
+        repo_root
+        / "solutions"
+        / "ess-maker-skills"
+        / CURATOR_SKILL_PATH
+    ).read_text(encoding="utf-8")
+    normalized = " ".join(curator.split())
+    normalized_lower = normalized.lower()
+
+    assert "two abstract retrieval capabilities" in normalized_lower
+    assert "**Search**" in curator
+    assert "**Fetch**" in curator
+    assert "host-provided servicenow specialization" in normalized_lower
+    assert "graph results are the bounded ranked subset" in normalized_lower
+    assert (
+        "mcp-fetched article bodies are the canonical full-content fetches"
+        in normalized_lower
+    )
+    assert "setup or authentication mechanics remain the host wrapper's responsibility" in normalized_lower
+
+    specialization = normalized_lower.index("host-provided servicenow specialization")
+    discovery = normalized_lower.index("topic discovery via exploratory query clustering")
+    targeted = normalized_lower.index("per-topic targeted grounding")
+    generation = normalized_lower.index("generate knowledge q&a cases")
+    assert specialization < discovery < targeted < generation
 
 
 def test_session_options_disable_host_and_production_connections(tmp_path) -> None:

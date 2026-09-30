@@ -102,7 +102,7 @@ Catch and fix compile errors before they reach production. The `/scan` command a
 Create evaluation test sets from three sources:
 
 - **Configured agent topics** — validate behavior already present in the active agent.
-- **Local knowledge source or connected knowledge base + agent instructions** — curate grounded knowledge and instruction-adherence tests through the vendored curator. The knowledge source can be a local knowledge source (files or a folder) or a connected knowledge base (for example ServiceNow or SharePoint) reachable through a search/fetch tool already available in the session; the kit does not set up the connection itself.
+- **Local knowledge source or connected knowledge base + agent instructions** — curate grounded knowledge and instruction-adherence tests through the vendored curator. The knowledge source can be local files/a folder or a connected knowledge base such as ServiceNow or SharePoint. For ServiceNow-backed curation, the kit resolves and searches the active Graph connection for a bounded ranked subset, then fetches selected full articles through ServiceNow MCP before grounding. ServiceNow MCP must already be configured through `/connect ServiceNow`; foundation `/setup` does not configure vendor MCP credentials.
 - **Bundled ESS catalogue** — seed tests for a named ESS scenario without configured topics or documents.
 
 All three sources produce native `.mcs.yml` plus CSV artifacts and use the existing review, push, run, and results lifecycle.
@@ -323,6 +323,13 @@ The kit also includes a local ServiceNow MCP server (`src/mcp/servicenow/`) for 
 - **Connection testing** — Verify instance connectivity and credentials
 
 Configured automatically during `/connect servicenow`.
+
+Knowledge-source evaluation curation uses this MCP server only after the kit
+resolves and searches the active Graph connection for the agent's
+ServiceNow-backed knowledge source. Run `/connect ServiceNow` first so the
+ServiceNow MCP server and vendor credentials are already configured.
+Foundation `/setup` connects the Maker Kit workspace to the agent; it does not
+configure vendor MCP credentials.
 
 ---
 

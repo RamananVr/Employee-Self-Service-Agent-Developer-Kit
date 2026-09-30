@@ -69,6 +69,83 @@ def test_curator_wrapper_resolves_and_confirms_connected_kb_connection():
     assert "pick one or more" in normalized_lower
 
 
+def test_curator_wrapper_defines_bounded_servicenow_retrieval_sequence():
+    wrapper = _read("src/skills/evaluations/curate/SKILL.md")
+    normalized = " ".join(wrapper.split())
+    normalized_lower = normalized.lower()
+
+    resolver = normalized.index("scripts/resolve_kb_connection.py")
+    confirmation = normalized_lower.index("maker's confirmation or choice")
+    graph_search = normalized.index("scripts/search_connected_kb.py")
+    classification = normalized_lower.index("canonical graph metadata classification")
+    safe_mapping = normalized_lower.index("safe `sys_id`/article-number identifiers")
+    mcp_fetch = normalized.index('get_record( table="kb_knowledge"')
+    grounding = normalized_lower.index(
+        "ground and generate only after canonical mcp content fetches"
+    )
+
+    assert resolver < confirmation < graph_search < classification
+    assert classification < safe_mapping < mcp_fetch < grounding
+    assert '--connection "{CONFIRMED_CONNECTION_REFERENCE}"' in wrapper
+    assert '--query "{BOUNDED_QUERY}"' in wrapper
+    assert '--limit "{BOUNDED_LIMIT}"' in wrapper
+    assert "parse only the cli's deterministic json" in normalized_lower
+    assert "3-5 broad queries" in normalized_lower
+    assert "top 5-10 results" in normalized_lower
+    assert "one targeted query" in normalized_lower
+    assert "top 10-20 results" in normalized_lower
+
+    exact_fields = (
+        "sys_id,number,short_description,text,"
+        "kb_knowledge_base,workflow_state"
+    )
+    assert f'fields="{exact_fields}"' in wrapper
+    assert 'query="numberIN{MAPPED_NUMBERS}"' in wrapper
+    assert "limit={MAPPED_NUMBER_COUNT}" in wrapper
+
+
+def test_curator_wrapper_classifies_servicenow_and_forbids_broad_fallbacks():
+    normalized = _normalized("src/skills/evaluations/curate/SKILL.md")
+    normalized_lower = normalized.lower()
+
+    assert "classification is `ambiguous`" in normalized_lower
+    assert "confirm it is servicenow before any mcp use" in normalized_lower
+    assert "classification is `other`" in normalized_lower
+    assert "generic connected-kb flow" in normalized_lower
+    assert "blank" in normalized_lower
+    assert "unscoped" in normalized_lower
+    assert "broad `kb_knowledge` queries" in normalized_lower
+    assert "title-based lookup" in normalized_lower
+    assert "title-based fallback" in normalized_lower
+    assert "never broad-search servicenow as a fallback" in normalized_lower
+
+
+def test_curator_wrapper_documents_servicenow_failure_boundaries():
+    normalized = _normalized("src/skills/evaluations/curate/SKILL.md")
+    normalized_lower = normalized.lower()
+
+    assert "graph search, authentication, permission, transport, or malformed-response failure" in normalized_lower
+    assert "restart in local-file mode" in normalized_lower
+    assert "missing, stopped, or unauthenticated servicenow mcp" in normalized_lower
+    assert "/connect servicenow" in normalized_lower
+    assert "start or fix the configured server" in normalized_lower
+    assert "unmapped graph hit" in normalized_lower
+    assert "skip it and disclose" in normalized_lower
+    assert "individual selected record fetch fails" in normalized_lower
+    assert "remaining bounded subset" in normalized_lower
+
+
+def test_curator_wrapper_preserves_local_and_generic_connected_kb_flows():
+    normalized = _normalized("src/skills/evaluations/curate/SKILL.md").lower()
+
+    assert "skip that gate entirely in local-file mode" in normalized
+    assert "remain on the generic connected-kb flow" in normalized
+    assert "local-file and non-servicenow connected-kb flows remain unchanged" in normalized
+    assert "maker kit validation" in normalized
+    assert "promotion" in normalized
+    assert "scoped push" in normalized
+
+
 def test_dispatcher_preserves_topic_and_catalogue_routes():
     dispatcher = _read("src/skills/evaluations/dispatcher/SKILL.md")
     normalized = " ".join(dispatcher.split()).lower()
@@ -560,6 +637,19 @@ def test_maker_readme_documents_all_evaluation_generation_sources():
     assert "native `.mcs.yml`" in readme
     assert "csv" in readme
     assert "review, push, run, and results lifecycle" in readme
+
+
+def test_maker_readme_documents_servicenow_curation_prerequisites():
+    readme = _normalized("README.md").lower()
+
+    assert "active graph connection" in readme
+    assert "servicenow-backed curation" in readme
+    assert "resolves and searches" in readme
+    assert "servicenow mcp" in readme
+    assert "already be configured" in readme
+    assert "/connect servicenow" in readme
+    assert "foundation `/setup`" in readme
+    assert "does not configure vendor mcp credentials" in readme
 
 
 def test_evaluation_docs_preserve_generation_skill_boundaries():

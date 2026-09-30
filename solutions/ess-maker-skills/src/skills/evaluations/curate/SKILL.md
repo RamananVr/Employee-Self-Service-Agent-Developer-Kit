@@ -120,6 +120,90 @@ Only after the maker's confirmation or choice, hand off the confirmed
 `connection_name`(s) into the curator body's existing Step 3b/3c flow as the
 connected-KB source identifier it already expects.
 
+### ServiceNow live-retrieval specialization
+
+After the bound-source resolver and the maker's confirmation or selection
+gate, apply this specialization to every confirmed connection before using any
+ServiceNow MCP tool. Local-file and non-ServiceNow connected-KB flows remain
+unchanged.
+
+For each bounded discovery or targeted query, run the scoped Graph search shim
+from `solutions/ess-maker-skills/` exactly through this command shape:
+
+```powershell
+py -3.12 scripts/search_connected_kb.py `
+  --connection "{CONFIRMED_CONNECTION_REFERENCE}" `
+  --query "{BOUNDED_QUERY}" `
+  --limit "{BOUNDED_LIMIT}"
+```
+
+Parse only the CLI's deterministic JSON. Do not parse console prose or call
+Graph through an improvised path. Use the returned canonical Graph metadata
+classification from `connection.classification` before using any returned hit:
+
+- If the classification is `ambiguous`, ask the maker to confirm it is
+  ServiceNow before any MCP use.
+- If the classification is `other`, remain on the generic connected-KB flow
+  described by the curator body. Do not invoke ServiceNow MCP.
+- Only a `servicenow` classification, or an `ambiguous` classification the
+  maker explicitly confirms as ServiceNow, enters the rest of this
+  specialization.
+
+Use bounded retrieval throughout:
+
+1. For topic discovery, run **3-5 broad queries**, each limited to the
+   **top 5-10 results**.
+2. After the maker confirms topics, run **one targeted query per confirmed
+   topic**, limited to the **top 10-20 results**.
+3. Map only returned safe `sys_id`/article-number identifiers. An unmapped
+   Graph hit must be skipped and disclosed to the maker; never infer an
+   identifier from a title, URL, snippet, or other text.
+4. Fetch only the selected, mapped records through ServiceNow MCP. Use exactly
+   one of these projections:
+
+```text
+get_record(
+  table="kb_knowledge",
+  sys_id="{MAPPED_SYS_ID}",
+  fields="sys_id,number,short_description,text,kb_knowledge_base,workflow_state"
+)
+```
+
+or, when multiple selected hits have safe article-number mappings, this
+bounded batch:
+
+```text
+query_table(
+  table="kb_knowledge",
+  query="numberIN{MAPPED_NUMBERS}",
+  fields="sys_id,number,short_description,text,kb_knowledge_base,workflow_state",
+  limit={MAPPED_NUMBER_COUNT}
+)
+```
+
+Ground and generate only after canonical MCP content fetches complete. The
+Graph results are the bounded ranked candidate subset; they are not a
+substitute for the canonical full article content returned by ServiceNow MCP.
+
+Never issue blank, unscoped, or broad `kb_knowledge` queries. Never use a
+title-based lookup or title-based fallback. In particular, never broad-search
+ServiceNow as a fallback when Graph search or mapping fails.
+
+Apply these failure boundaries:
+
+- A Graph search, authentication, permission, transport, or malformed-response
+  failure stops the connected flow. Report the error and offer the maker the
+  option to restart in local-file mode. Never broad-search ServiceNow as a
+  fallback.
+- Missing, stopped, or unauthenticated ServiceNow MCP stops the flow with
+  targeted guidance to run `/connect ServiceNow`, or to start or fix the
+  configured server when it already exists.
+- If an unmapped Graph hit is returned, skip it and disclose the skipped hit
+  while continuing with the safely mapped subset.
+- If an individual selected record fetch fails, skip it and disclose the
+  failure while continuing with the remaining bounded subset. Do not replace
+  it with a title lookup or a broad query.
+
 The vendored curator skill's "Host integration contract" section describes
 resolving paths relative to a curator-package root that the submodule packaging
 once provided. That resolution does not apply here: the curator is vendored

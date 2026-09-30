@@ -71,6 +71,20 @@ grounded generation, synchronized YAML/CSV writing, preview, structural
 validation, and the curator quality rubric. The host contract never weakens
 required confirmations or grounding.
 
+### Host-provided ServiceNow specialization
+
+A host may specialize the generic Search and Fetch capabilities for a
+ServiceNow-backed connected knowledge base. In that specialization, Graph
+results are the bounded ranked subset used for discovery and per-topic
+selection, and MCP-fetched article bodies are the canonical full-content
+fetches used for grounding. Generation must not begin until those canonical
+article bodies have been fetched.
+
+This specialization does not change the generic Search/Fetch contract below,
+the local-file flow, topic confirmation, bounded discovery and targeted-search
+rules, or fetch-failure disclosure. Setup or authentication mechanics remain
+the host wrapper's responsibility; this vendored body does not duplicate them.
+
 When `hostLifecycleHandoff` is present, complete validation and any
 user-approved fixes, then return this structured handoff:
 
