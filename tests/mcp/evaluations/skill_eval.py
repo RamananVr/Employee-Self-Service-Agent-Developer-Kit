@@ -133,6 +133,66 @@ SYNTHETIC_KB_ARTICLES: dict[str, dict[str, str]] = {
 # Deliberately has no matching articles above, so a search for this subject
 # returns zero results.
 SYNTHETIC_KB_EMPTY_SUBJECT = "relocation reimbursement"
+SERVICENOW_KB_FIELDS = (
+    "sys_id,number,short_description,text,kb_knowledge_base,workflow_state"
+)
+SERVICENOW_CONNECTION_ID = "ServiceNowKB63"
+SERVICENOW_INSTANCE_URL = "https://fake.service-now.com"
+DEFAULT_SERVICENOW_TARGETED_HITS = (
+    {
+        "title": "Parental leave policy",
+        "sys_id": "sys-parental-leave",
+        "sourceUrl": f"{SERVICENOW_INSTANCE_URL}/kb?id=sys-parental-leave",
+    },
+    {
+        "title": "PTO rollover policy",
+        "number": "KB009876",
+        "sourceUrl": f"{SERVICENOW_INSTANCE_URL}/kb?number=KB009876",
+    },
+    {
+        "title": "Unmapped policy overview",
+        "sourceUrl": f"{SERVICENOW_INSTANCE_URL}/kb?article=overview",
+    },
+)
+SERVICENOW_RECORDS = {
+    "sys-parental-leave": {
+        "sys_id": "sys-parental-leave",
+        "number": "KB001234",
+        "short_description": "Parental leave policy",
+        "text": "Eligible employees receive twelve weeks of parental leave.",
+        "kb_knowledge_base": "HR",
+        "workflow_state": "published",
+    },
+    "KB009876": {
+        "sys_id": "sys-pto-rollover",
+        "number": "KB009876",
+        "short_description": "PTO rollover policy",
+        "text": "Unused PTO rolls over up to forty hours.",
+        "kb_knowledge_base": "HR",
+        "workflow_state": "published",
+    },
+    "sys-sick-leave": {
+        "sys_id": "sys-sick-leave",
+        "number": "KB004444",
+        "short_description": "Sick leave policy",
+        "text": "Notify your manager before the start of the workday.",
+        "kb_knowledge_base": "HR",
+        "workflow_state": "published",
+    },
+}
+
+
+@dataclass(frozen=True)
+class ServiceNowLiveScenario:
+    classification: str = "servicenow"
+    graph_failure: str | None = None
+    mcp_failure: str | None = None
+    host_identity: str = "confirmed"
+    targeted_hits: tuple[dict[str, str], ...] | None = None
+    fetch_failures: frozenset[str] = frozenset()
+    returned_identifier_overrides: dict[str, dict[str, str]] = field(
+        default_factory=dict
+    )
 
 _SEARCH_STOPWORDS = {
     "the", "a", "an", "and", "or", "to", "of", "in", "on", "for", "is", "are",
@@ -227,6 +287,69 @@ def tool_contracts() -> list[ToolContract]:
                 "additionalProperties": False,
             },
         ),
+        ToolContract(
+            "graph_external_item_search",
+            (
+                "Search one explicitly scoped synthetic Graph external connection. "
+                "Records content source, query, limit, ordering, and orchestration phase."
+            ),
+            {
+                "type": "object",
+                "properties": {
+                    "contentSources": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                    "query": {"type": "string"},
+                    "limit": {"type": "integer"},
+                    "orderBy": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                    "phase": {
+                        "type": "string",
+                        "enum": ["classification", "broad", "targeted"],
+                    },
+                },
+                "required": [
+                    "contentSources",
+                    "query",
+                    "limit",
+                    "orderBy",
+                    "phase",
+                ],
+                "additionalProperties": False,
+            },
+        ),
+        ToolContract(
+            "get_record",
+            "Fetch one synthetic ServiceNow knowledge article by sys_id.",
+            {
+                "type": "object",
+                "properties": {
+                    "table": {"type": "string"},
+                    "sys_id": {"type": "string"},
+                    "fields": {"type": "string"},
+                },
+                "required": ["table", "sys_id", "fields"],
+                "additionalProperties": False,
+            },
+        ),
+        ToolContract(
+            "query_table",
+            "Fetch synthetic ServiceNow knowledge articles by bounded numberIN query.",
+            {
+                "type": "object",
+                "properties": {
+                    "table": {"type": "string"},
+                    "query": {"type": "string"},
+                    "fields": {"type": "string"},
+                    "limit": {"type": "integer"},
+                },
+                "required": ["table", "query", "fields", "limit"],
+                "additionalProperties": False,
+            },
+        ),
     ]
 
 
@@ -248,6 +371,9 @@ class FakeEvaluationWorkspace:
     turn: int = 0
     limit_exceeded: bool = False
     contract_by_name: dict[str, ToolContract] = field(default_factory=dict)
+    _servicenow_scenario: ServiceNowLiveScenario | None = field(
+        default=None, init=False, repr=False
+    )
 
     def __post_init__(self) -> None:
         self.files.update(
@@ -342,7 +468,407 @@ class FakeEvaluationWorkspace:
                 kind="fetch",
             )
 
+        if name == "graph_external_item_search":
+            content_sources = arguments["contentSources"]
+            if (
+                len(content_sources) != 1
+                or content_sources[0]
+                != f"/external/connections/{SERVICENOW_CONNECTION_ID}"
+                or not arguments["query"].strip()
+                or arguments["limit"] <= 0
+                or not arguments["orderBy"]
+            ):
+                return self._record(
+                    name,
+                    arguments,
+                    {"error": "Graph search requires one bounded connection scope."},
+                    failed=True,
+                    kind="graph_search",
+                )
+            scenario = self._servicenow_scenario
+            if scenario is not None and scenario.graph_failure is not None:
+                return self._record(
+                    name,
+                    arguments,
+                    {"error": f"Graph {scenario.graph_failure} failure."},
+                    failed=True,
+                    kind="graph_search",
+                )
+            if arguments["phase"] == "targeted":
+                results = list(
+                    scenario.targeted_hits
+                    if scenario is not None and scenario.targeted_hits is not None
+                    else DEFAULT_SERVICENOW_TARGETED_HITS
+                )
+            else:
+                results = [
+                    {"title": "Leave policies"},
+                    {"title": "Paid time off"},
+                ][: arguments["limit"]]
+            return self._record(
+                name,
+                arguments,
+                {
+                    "connection": SERVICENOW_CONNECTION_ID,
+                    "query": arguments["query"],
+                    "limit": arguments["limit"],
+                    "orderBy": arguments["orderBy"],
+                    "hits": results,
+                },
+                kind="graph_search",
+            )
+
+        if name == "get_record":
+            error = self._servicenow_contract_error(arguments)
+            if error is not None or not arguments["sys_id"].strip():
+                return self._record(
+                    name,
+                    arguments,
+                    {"error": error or "sys_id must not be blank."},
+                    failed=True,
+                    kind="servicenow_fetch",
+                )
+            return self._servicenow_record_result(
+                name, arguments, arguments["sys_id"]
+            )
+
+        if name == "query_table":
+            error = self._servicenow_contract_error(arguments)
+            query = arguments["query"].strip()
+            number_match = re.fullmatch(r"numberIN([^,\s]+(?:,[^,\s]+)*)", query)
+            if (
+                error is not None
+                or not query
+                or "title" in query.lower()
+                or "short_description" in query.lower()
+                or number_match is None
+            ):
+                return self._record(
+                    name,
+                    arguments,
+                    {"error": error or "Only bounded numberIN queries are allowed."},
+                    failed=True,
+                    kind="servicenow_fetch",
+                )
+            numbers = number_match.group(1).split(",")
+            if arguments["limit"] != len(numbers):
+                return self._record(
+                    name,
+                    arguments,
+                    {"error": "numberIN limit must match the requested number count."},
+                    failed=True,
+                    kind="servicenow_fetch",
+                )
+            if len(numbers) != 1:
+                records = [
+                    self._servicenow_record(numbers_item)
+                    for numbers_item in numbers
+                    if numbers_item in SERVICENOW_RECORDS
+                ]
+                return self._record(
+                    name,
+                    arguments,
+                    {"result": records},
+                    kind="servicenow_fetch",
+                )
+            return self._servicenow_record_result(name, arguments, numbers[0])
+
         return self._run_command(arguments)
+
+    def run_servicenow_live(self, scenario: ServiceNowLiveScenario) -> None:
+        self._servicenow_scenario = scenario
+        self._record(
+            "resolve_kb_connection",
+            {"reference": SERVICENOW_CONNECTION_ID},
+            {
+                "connection": {
+                    "id": SERVICENOW_CONNECTION_ID,
+                    "source": "ServiceNow",
+                }
+            },
+            kind="resolve",
+        )
+        self._record(
+            "maker_confirmation",
+            {"connection_id": SERVICENOW_CONNECTION_ID, "confirmed": True},
+            {"confirmed": True},
+            kind="confirm",
+        )
+
+        if scenario.classification == "other":
+            self.invoke(
+                "graph_external_item_search",
+                {
+                    "contentSources": [
+                        f"/external/connections/{SERVICENOW_CONNECTION_ID}"
+                    ],
+                    "query": "source classification probe",
+                    "limit": 5,
+                    "orderBy": ["rank desc"],
+                    "phase": "classification",
+                },
+            )
+            self._record(
+                "generic_flow_continuation",
+                {"classification": "other"},
+                {"discarded_specialized_results": True},
+                kind="generic_continuation",
+            )
+            return
+
+        self._record(
+            "servicenow_host_identity",
+            {
+                "classification": scenario.classification,
+                "indexed_source_url": (
+                    f"{SERVICENOW_INSTANCE_URL}/kb?id=classification-probe"
+                ),
+                "configured_mcp_instance": SERVICENOW_INSTANCE_URL,
+                "status": scenario.host_identity,
+            },
+            {
+                "classification": "servicenow",
+                "instance": SERVICENOW_INSTANCE_URL,
+                "matches_configured_mcp_instance": (
+                    scenario.host_identity == "confirmed"
+                ),
+                "confirmed": scenario.host_identity == "confirmed",
+            },
+            failed=scenario.host_identity != "confirmed",
+            kind="host_identity",
+        )
+        if scenario.host_identity != "confirmed":
+            self._record(
+                "guidance",
+                {"host_identity": scenario.host_identity},
+                {
+                    "action": "reconfigure_servicenow_identity",
+                    "message": "Confirm one configured ServiceNow MCP instance that "
+                    "matches the indexed source URL.",
+                },
+                kind="guidance",
+            )
+            return
+
+        for query in (
+            "employee leave policies",
+            "paid time off policies",
+            "workplace access policies",
+            "employee support policies",
+        ):
+            search = self.invoke(
+                "graph_external_item_search",
+                {
+                    "contentSources": [
+                        f"/external/connections/{SERVICENOW_CONNECTION_ID}"
+                    ],
+                    "query": query,
+                    "limit": 7,
+                    "orderBy": ["rank desc"],
+                    "phase": "broad",
+                },
+            )
+            if search.failed:
+                self._record(
+                    "guidance",
+                    {"graph_failure": scenario.graph_failure},
+                    {
+                        "action": "restart_with_local_files",
+                        "message": "Graph search failed; restart curation with local files.",
+                    },
+                    kind="guidance",
+                )
+                return
+
+        targeted = self.invoke(
+            "graph_external_item_search",
+            {
+                "contentSources": [
+                    f"/external/connections/{SERVICENOW_CONNECTION_ID}"
+                ],
+                "query": "confirmed leave and paid time off topic",
+                "limit": 15,
+                "orderBy": ["rank desc"],
+                "phase": "targeted",
+            },
+        )
+        if targeted.failed:
+            self._record(
+                "guidance",
+                {"graph_failure": scenario.graph_failure},
+                {
+                    "action": "restart_with_local_files",
+                    "message": "Graph search failed; restart curation with local files.",
+                },
+                kind="guidance",
+            )
+            return
+
+        if scenario.mcp_failure == "missing":
+            self._record(
+                "guidance",
+                {"mcp_failure": scenario.mcp_failure},
+                {
+                    "action": "start_or_fix_servicenow_mcp",
+                    "message": "Run /connect ServiceNow, then start or fix authentication "
+                    "for the configured ServiceNow MCP server.",
+                },
+                kind="guidance",
+            )
+            return
+
+        grounded_ids: list[str] = []
+        for hit in targeted.result["hits"]:
+            identifier_type = "sys_id" if hit.get("sys_id") else "number"
+            identifier = hit.get(identifier_type)
+            if identifier is None:
+                self._record(
+                    "disclose_unmapped_hit",
+                    {"hit": hit},
+                    {"reason": "unmapped", "title": hit["title"]},
+                    kind="disclosure",
+                )
+                continue
+            self._record(
+                "map_servicenow_identifier",
+                {"title": hit["title"]},
+                {"type": identifier_type, "value": identifier},
+                kind="identifier_mapping",
+            )
+            if identifier_type == "sys_id":
+                fetch = self.invoke(
+                    "get_record",
+                    {
+                        "table": "kb_knowledge",
+                        "sys_id": identifier,
+                        "fields": SERVICENOW_KB_FIELDS,
+                    },
+                )
+            else:
+                fetch = self.invoke(
+                    "query_table",
+                    {
+                        "table": "kb_knowledge",
+                        "query": f"numberIN{identifier}",
+                        "fields": SERVICENOW_KB_FIELDS,
+                        "limit": 1,
+                    },
+                )
+            if fetch.failed:
+                if scenario.mcp_failure == "authentication":
+                    self._record(
+                        "guidance",
+                        {"mcp_failure": scenario.mcp_failure},
+                        {
+                            "action": "start_or_fix_servicenow_mcp",
+                            "message": "Run /connect ServiceNow, then start or fix "
+                            "authentication for the configured ServiceNow MCP server.",
+                        },
+                        kind="guidance",
+                    )
+                    return
+                self._record(
+                    "disclose_fetch_failure",
+                    {"identifier": identifier},
+                    {"reason": "fetch_failed", "identifier": identifier},
+                    kind="disclosure",
+                )
+                continue
+            record = fetch.result["result"]
+            if (
+                identifier_type == "sys_id"
+                and record["sys_id"] != identifier
+                or identifier_type == "number"
+                and record["number"] != identifier
+            ):
+                self._record(
+                    "disclose_identifier_mismatch",
+                    {"identifier": identifier},
+                    {
+                        "reason": "identifier_mismatch",
+                        "identifier": identifier,
+                        "returned": {
+                            "sys_id": record["sys_id"],
+                            "number": record["number"],
+                        },
+                    },
+                    kind="disclosure",
+                )
+                continue
+            grounded_ids.append(record["sys_id"])
+            self._record(
+                "ground_servicenow_record",
+                {"identifier": identifier},
+                {
+                    "sys_id": record["sys_id"],
+                    "number": record["number"],
+                    "grounded": True,
+                },
+                kind="grounding",
+            )
+
+        if grounded_ids:
+            self._record(
+                "write_file",
+                {
+                    "path": "workspace/evaluations/servicenow-live/live.mcs.yml",
+                    "content": "kind: EvaluationSet",
+                    "grounded_record_ids": grounded_ids,
+                },
+                {"written": True},
+                kind="write",
+            )
+
+    @staticmethod
+    def _servicenow_contract_error(arguments: dict[str, Any]) -> str | None:
+        if arguments["table"] != "kb_knowledge":
+            return "Only kb_knowledge is allowed."
+        if arguments["fields"] != SERVICENOW_KB_FIELDS:
+            return "ServiceNow knowledge fields must use the exact projection."
+        return None
+
+    def _servicenow_record_result(
+        self, name: str, arguments: dict[str, Any], identifier: str
+    ) -> RecordedCall:
+        scenario = self._servicenow_scenario
+        if scenario is not None and (
+            scenario.mcp_failure == "authentication"
+            or identifier in scenario.fetch_failures
+        ):
+            return self._record(
+                name,
+                arguments,
+                {
+                    "error": (
+                        "Synthetic ServiceNow authentication failed."
+                        if scenario.mcp_failure == "authentication"
+                        else f"Synthetic fetch failed for {identifier}."
+                    )
+                },
+                failed=True,
+                kind="servicenow_fetch",
+            )
+        if identifier not in SERVICENOW_RECORDS:
+            return self._record(
+                name,
+                arguments,
+                {"error": "Synthetic ServiceNow record not found."},
+                failed=True,
+                kind="servicenow_fetch",
+            )
+        return self._record(
+            name,
+            arguments,
+            {"result": self._servicenow_record(identifier)},
+            kind="servicenow_fetch",
+        )
+
+    def _servicenow_record(self, identifier: str) -> dict[str, str]:
+        record = deepcopy(SERVICENOW_RECORDS[identifier])
+        scenario = self._servicenow_scenario
+        if scenario is not None:
+            record.update(scenario.returned_identifier_overrides.get(identifier, {}))
+        return record
 
     def _run_command(self, arguments: dict[str, Any]) -> RecordedCall:
         command = arguments["command"]

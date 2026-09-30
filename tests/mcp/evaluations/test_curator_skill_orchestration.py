@@ -24,6 +24,8 @@ from tests.mcp.evaluations.skill_eval import (
     SYNTHETIC_KB_EMPTY_SUBJECT,
     SYNTHETIC_REPO_ROOT,
     SYNTHETIC_SOLUTION_ROOT,
+    SERVICENOW_KB_FIELDS,
+    ServiceNowLiveScenario,
     UPDATE_SKILL_PATH,
     WRAPPER_SKILL_PATH,
     EvalTurn,
@@ -35,8 +37,8 @@ from tests.mcp.evaluations.skill_eval import (
 )
 
 # The connected-KB tests below (test_connected_kb_*) are offline/synthetic:
-# they manually drive `backend.invoke(...)` against the fake `search`/`fetch`
-# tools and the SYNTHETIC_KB_ARTICLES fixture to prove the curator's
+# they manually drive `backend.invoke(...)` against synthetic retrieval
+# contracts and fixtures to prove the curator's
 # connected-KB CALL SEQUENCE (discovery search -> targeted search+fetch
 # grounding -> eval-set write; skip fetch/write on zero search results). They
 # run in CI with no credentials and do NOT invoke a real model, so they do
@@ -892,6 +894,329 @@ def test_connected_kb_zero_result_topic_generates_no_cases() -> None:
     calls = backend.calls
     assert not any(call.kind == "fetch" for call in calls)
     assert not any(call.kind == "write" for call in calls)
+
+
+def test_servicenow_live_scoped_search_and_fetch_contracts_reject_unsafe_requests() -> None:
+    backend = _ready_backend()
+
+    missing_scope = backend.invoke(
+        "graph_external_item_search",
+        {"contentSources": [], "query": "leave", "limit": 5, "orderBy": ["rank"]},
+    )
+    multiple_scopes = backend.invoke(
+        "graph_external_item_search",
+        {
+            "contentSources": ["/external/connections/a", "/external/connections/b"],
+            "query": "leave",
+            "limit": 5,
+            "orderBy": ["rank"],
+        },
+    )
+    invalid_table = backend.invoke(
+        "get_record",
+        {"table": "incident", "sys_id": "sys-leave", "fields": SERVICENOW_KB_FIELDS},
+    )
+    blank_query = backend.invoke(
+        "query_table",
+        {
+            "table": "kb_knowledge",
+            "query": "",
+            "fields": SERVICENOW_KB_FIELDS,
+            "limit": 1,
+        },
+    )
+    wrong_fields = backend.invoke(
+        "query_table",
+        {
+            "table": "kb_knowledge",
+            "query": "numberINKB001",
+            "fields": "sys_id,number,text",
+            "limit": 1,
+        },
+    )
+    title_query = backend.invoke(
+        "query_table",
+        {
+            "table": "kb_knowledge",
+            "query": "short_descriptionLIKEleave",
+            "fields": SERVICENOW_KB_FIELDS,
+            "limit": 1,
+        },
+    )
+    mismatched_limit = backend.invoke(
+        "query_table",
+        {
+            "table": "kb_knowledge",
+            "query": "numberINKB001,KB002",
+            "fields": SERVICENOW_KB_FIELDS,
+            "limit": 10,
+        },
+    )
+    unbounded = backend.invoke(
+        "query_table",
+        {
+            "table": "kb_knowledge",
+            "query": "numberINKB001",
+            "fields": SERVICENOW_KB_FIELDS,
+        },
+    )
+
+    assert all(
+        call.failed
+        for call in (
+            missing_scope,
+            multiple_scopes,
+            invalid_table,
+            blank_query,
+            wrong_fields,
+            title_query,
+            mismatched_limit,
+            unbounded,
+        )
+    )
+
+
+def test_servicenow_live_resolves_searches_fetches_and_grounds_before_write() -> None:
+    backend = _ready_backend()
+
+    backend.run_servicenow_live(ServiceNowLiveScenario())
+
+    calls = backend.calls
+    resolve_index = next(i for i, call in enumerate(calls) if call.kind == "resolve")
+    confirm_index = next(i for i, call in enumerate(calls) if call.kind == "confirm")
+    graph_indexes = [
+        i for i, call in enumerate(calls) if call.kind == "graph_search"
+    ]
+    fetch_indexes = [
+        i for i, call in enumerate(calls) if call.kind == "servicenow_fetch"
+    ]
+    grounding_indexes = [
+        i for i, call in enumerate(calls) if call.kind == "grounding"
+    ]
+    write_index = next(i for i, call in enumerate(calls) if call.kind == "write")
+    identity_index = next(
+        i for i, call in enumerate(calls) if call.kind == "host_identity"
+    )
+
+    assert calls[resolve_index].result["connection"]["id"] == "ServiceNowKB63"
+    assert calls[confirm_index].arguments == {
+        "connection_id": "ServiceNowKB63",
+        "confirmed": True,
+    }
+    assert resolve_index < confirm_index < graph_indexes[0]
+    assert confirm_index < identity_index < graph_indexes[0]
+    assert max(graph_indexes) < min(fetch_indexes)
+    assert max(fetch_indexes) < write_index
+    assert len(grounding_indexes) == 2
+    assert max(fetch_indexes) < max(grounding_indexes) < write_index
+    host_identity = next(call for call in calls if call.kind == "host_identity")
+    assert host_identity.result == {
+        "classification": "servicenow",
+        "instance": "https://fake.service-now.com",
+        "matches_configured_mcp_instance": True,
+        "confirmed": True,
+    }
+
+    searches = [calls[index] for index in graph_indexes]
+    broad_searches = [call for call in searches if call.arguments["phase"] == "broad"]
+    targeted_searches = [
+        call for call in searches if call.arguments["phase"] == "targeted"
+    ]
+    assert 3 <= len(broad_searches) <= 5
+    assert all(5 <= call.arguments["limit"] <= 10 for call in broad_searches)
+    assert len(targeted_searches) == 1
+    assert 10 <= targeted_searches[0].arguments["limit"] <= 20
+    assert all(
+        call.arguments["contentSources"]
+        == ["/external/connections/ServiceNowKB63"]
+        for call in searches
+    )
+    assert all(call.arguments["query"].strip() for call in searches)
+    assert all(call.arguments["orderBy"] for call in searches)
+
+    fetches = [calls[index] for index in fetch_indexes]
+    assert len(fetches) == 2
+    assert {call.name for call in fetches} == {
+        "get_record",
+        "query_table",
+    }
+    assert all(call.arguments["table"] == "kb_knowledge" for call in fetches)
+    assert all(call.arguments["fields"] == SERVICENOW_KB_FIELDS for call in fetches)
+    assert not any(
+        call.name == "query_table"
+        and (
+            not call.arguments["query"].startswith("numberIN")
+            or "short_description" in call.arguments["query"]
+        )
+        for call in calls
+    )
+    assert not any(
+        call.kind == "servicenow_fetch"
+        and "Unmapped policy overview" in str(call.arguments)
+        for call in calls
+    )
+    assert any(
+        call.kind == "disclosure" and call.result["reason"] == "unmapped"
+        for call in calls
+    )
+    assert calls[write_index].result["written"] is True
+    assert calls[write_index].arguments["grounded_record_ids"] == [
+        "sys-parental-leave",
+        "sys-pto-rollover",
+    ]
+
+
+def test_servicenow_live_classification_other_continues_generic_without_mapping() -> None:
+    backend = _ready_backend()
+
+    backend.run_servicenow_live(ServiceNowLiveScenario(classification="other"))
+
+    assert not any(call.kind == "identifier_mapping" for call in backend.calls)
+    assert not any(call.kind == "servicenow_fetch" for call in backend.calls)
+    assert not any(call.kind == "write" for call in backend.calls)
+    assert any(
+        call.kind == "generic_continuation"
+        and call.result["discarded_specialized_results"] is True
+        for call in backend.calls
+    )
+
+
+@pytest.mark.parametrize("failure", ["permission", "authentication", "search"])
+def test_servicenow_live_graph_failure_offers_local_restart(failure: str) -> None:
+    backend = _ready_backend()
+
+    backend.run_servicenow_live(ServiceNowLiveScenario(graph_failure=failure))
+
+    assert not any(call.kind == "servicenow_fetch" for call in backend.calls)
+    assert not any(call.kind == "write" for call in backend.calls)
+    assert any(
+        call.kind == "guidance"
+        and call.result["action"] == "restart_with_local_files"
+        for call in backend.calls
+    )
+
+
+@pytest.mark.parametrize("failure", ["missing", "authentication"])
+def test_servicenow_live_mcp_failure_stops_with_connect_guidance(failure: str) -> None:
+    backend = _ready_backend()
+
+    backend.run_servicenow_live(ServiceNowLiveScenario(mcp_failure=failure))
+
+    assert not any(call.kind == "write" for call in backend.calls)
+    if failure == "authentication":
+        fetches = [
+            call for call in backend.calls if call.kind == "servicenow_fetch"
+        ]
+        assert len(fetches) == 1
+        assert fetches[0].failed
+    else:
+        assert not any(
+            call.kind == "servicenow_fetch" for call in backend.calls
+        )
+    assert any(
+        call.kind == "guidance"
+        and "/connect ServiceNow" in call.result["message"]
+        and call.result["action"] == "start_or_fix_servicenow_mcp"
+        for call in backend.calls
+    )
+
+
+def test_servicenow_live_one_fetch_failure_writes_remaining_grounded_subset() -> None:
+    backend = _ready_backend()
+
+    backend.run_servicenow_live(
+        ServiceNowLiveScenario(fetch_failures=frozenset({"KB009876"}))
+    )
+
+    fetches = [call for call in backend.calls if call.kind == "servicenow_fetch"]
+    assert len(fetches) == 2
+    assert sum(call.failed for call in fetches) == 1
+    assert any(
+        call.kind == "disclosure" and call.result["reason"] == "fetch_failed"
+        for call in backend.calls
+    )
+    write = next(call for call in backend.calls if call.kind == "write")
+    assert write.arguments["grounded_record_ids"] == ["sys-parental-leave"]
+
+
+def test_servicenow_live_returned_identifier_mismatch_is_disclosed_and_excluded() -> None:
+    backend = _ready_backend()
+
+    backend.run_servicenow_live(
+        ServiceNowLiveScenario(
+            returned_identifier_overrides={
+                "sys-parental-leave": {
+                    "sys_id": "sys-wrong-record",
+                    "number": "KB001234",
+                }
+            }
+        )
+    )
+
+    assert any(
+        call.kind == "disclosure" and call.result["reason"] == "identifier_mismatch"
+        for call in backend.calls
+    )
+    write = next(call for call in backend.calls if call.kind == "write")
+    assert write.arguments["grounded_record_ids"] == ["sys-pto-rollover"]
+
+
+@pytest.mark.parametrize(
+    "host_identity",
+    ["missing", "conflicting", "mismatched", "unconfirmed"],
+)
+def test_servicenow_live_invalid_host_identity_stops_before_fetch(
+    host_identity: str,
+) -> None:
+    backend = _ready_backend()
+
+    backend.run_servicenow_live(
+        ServiceNowLiveScenario(host_identity=host_identity)
+    )
+
+    assert not any(call.kind == "servicenow_fetch" for call in backend.calls)
+    assert not any(call.kind == "write" for call in backend.calls)
+    assert any(
+        call.kind == "guidance"
+        and call.result["action"] == "reconfigure_servicenow_identity"
+        for call in backend.calls
+    )
+
+
+def test_servicenow_live_n_mapped_hits_make_n_fetches_before_write() -> None:
+    backend = _ready_backend()
+    mapped_hits = (
+        {
+            "title": "Parental leave",
+            "sys_id": "sys-parental-leave",
+            "sourceUrl": "https://fake.service-now.com/kb?id=sys-parental-leave",
+        },
+        {
+            "title": "PTO rollover",
+            "number": "KB009876",
+            "sourceUrl": "https://fake.service-now.com/kb?number=KB009876",
+        },
+        {
+            "title": "Sick leave",
+            "sys_id": "sys-sick-leave",
+            "sourceUrl": "https://fake.service-now.com/kb?id=sys-sick-leave",
+        },
+    )
+
+    backend.run_servicenow_live(
+        ServiceNowLiveScenario(targeted_hits=mapped_hits)
+    )
+
+    fetch_indexes = [
+        index
+        for index, call in enumerate(backend.calls)
+        if call.kind == "servicenow_fetch"
+    ]
+    write_index = next(
+        index for index, call in enumerate(backend.calls) if call.kind == "write"
+    )
+    assert len(fetch_indexes) == len(mapped_hits)
+    assert max(fetch_indexes) < write_index
 
 
 def test_servicenow_host_specialization_preserves_generic_curator_contract() -> None:
