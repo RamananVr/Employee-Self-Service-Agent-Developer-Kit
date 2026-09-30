@@ -54,6 +54,10 @@ GRAPH_SCOPES = [
     # ExternalConnection.ReadWrite.OwnedBy / ExternalConnection.ReadWrite.All.
     # We ask for the read-only one because FlightCheck never mutates state.
     "https://graph.microsoft.com/ExternalConnection.Read.All",
+    # Microsoft Search requires delegated ExternalItem.Read.All when querying
+    # externalItem content. See the official Search API permissions table:
+    # https://learn.microsoft.com/graph/api/search-query#permissions
+    "https://graph.microsoft.com/ExternalItem.Read.All",
 ]
 
 # Wall-clock ceiling for the two silent lookups called from the interactive
@@ -637,6 +641,56 @@ class GraphClient:
         operation to detect silent crawl failures.
         """
         return self.get_all(f"/external/connections/{connection_id}/operations")
+
+    def search_external_items(
+        self,
+        connection_id: str,
+        query: str,
+        *,
+        size: int = 20,
+        fields: list[str] | None = None,
+    ) -> dict:
+        """Search external items in one exact Graph external connection.
+
+        POST /v1.0/search/query.
+        See https://learn.microsoft.com/graph/api/search-query.
+        """
+        if not isinstance(connection_id, str) or not connection_id.strip():
+            raise ValueError("connection_id must be a non-empty string")
+        if not isinstance(query, str) or not query.strip():
+            raise ValueError("query must be a non-empty string")
+        if not isinstance(size, int) or isinstance(size, bool) or not 1 <= size <= 100:
+            raise ValueError("size must be an integer between 1 and 100")
+
+        search_request: dict = {
+            "entityTypes": ["externalItem"],
+            "contentSources": [
+                f"/external/connections/{connection_id.strip()}"
+            ],
+            "query": {"queryString": query.strip()},
+            "from": 0,
+            "size": size,
+        }
+        if fields is not None:
+            search_request["fields"] = fields
+
+        headers = {**self.headers, "Content-Type": "application/json"}
+        resp = _SESSION.post(
+            f"{GRAPH_BASE}/search/query",
+            headers=headers,
+            json={"requests": [search_request]},
+            timeout=30,
+        )
+        if resp.status_code in (401, 403):
+            return {
+                "_error": "insufficient_permissions",
+                "_status": resp.status_code,
+            }
+        resp.raise_for_status()
+        data = resp.json()
+        if not isinstance(data, dict):
+            raise ValueError("Microsoft Search response must be a JSON object")
+        return data
 
     def get_claims_mapping_policies(self, service_principal_id: str) -> list:
         """List claimsMappingPolicy objects assigned to a service principal.
