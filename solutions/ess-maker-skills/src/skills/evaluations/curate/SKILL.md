@@ -263,6 +263,50 @@ Apply these failure boundaries:
   remaining bounded subset. Do not replace it with a title lookup or a broad
   query.
 
+### Cite source URLs on grounded cases
+
+This is an additive host write-responsibility, layered on top of the vendored
+Step 6 artifact shape **without editing the curator** body. The vendored Step 6
+defines the base CSV columns `Prompt,Expected response,Test Method Type,Passing
+Score` and the `.mcs.yml` `extensionData` carrying `displayOrder`; those base
+columns and keys stay exactly as the vendored body writes them. The host simply
+appends one more CSV column and one more extensionData key during the same
+Step 6 write pass.
+
+**2a — record the grounding source URL (connected-KB positive/boundary only).**
+While writing each set's `.mcs.yml` and `.csv` in the one Step 6 write pass,
+for every positive and boundary case grounded through the connected knowledge
+base, record that case's grounding document URL into both artifacts:
+
+- Add a `Source URL` column to the CSV, appended after the vendored
+  `Passing Score` column, holding that case's grounding `sourceUrl`.
+- Add a `sourceUrl` key under that case's child `.mcs.yml`
+  `extensionData.sourceUrl`, alongside the vendored `displayOrder`.
+
+The value is the grounding hit's `sourceUrl` as returned by
+`py -3.12 scripts/search_connected_kb.py` (its JSON hits include a `sourceUrl`
+field) for the hit that grounded that case. Carry the `sourceUrl` of each
+selected hit through grounding so it is available at write time, and record it
+in the same write pass so the two artifacts can never drift.
+
+Leave the `Source URL` column and the `sourceUrl` extensionData key **blank**
+for negative cases and for **all local-file cases**. Cite on positive and
+boundary connected-KB cases only, **never for negative cases** (a negative case
+tests the agent declining when no source covers the question — there is no
+source to cite) and never for any local-file case regardless of sign.
+
+**2b — conditional citation-adherence cases.** Generate a small pool of graded
+citation-adherence cases **only when** the live agent instructions resolved and
+confirmed in Step 1 actually require citing sources. If the resolved
+instructions do not mandate citation, generate none.
+
+When they do mandate citation, draw these cases only from positive and boundary
+grounding — **never** from negative cases. Each such case's `expectedOutput`
+describes citation as **observable** user-facing behavior (the response points
+the user to the supporting source) **without naming a backend** system,
+consistent with the vendored curator's "no backend names" rule. These cases
+follow the same vendored Step 6 artifact shape as every other set.
+
 The vendored curator skill's "Host integration contract" section describes
 resolving paths relative to a curator-package root that the submodule packaging
 once provided. That resolution does not apply here: the curator is vendored

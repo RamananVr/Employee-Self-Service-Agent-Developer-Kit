@@ -777,3 +777,50 @@ def test_evaluation_docs_preserve_generation_skill_boundaries():
     assert "must not absorb" in create
     assert "document-grounding" in create
     assert "curator workflow" in create
+
+
+def test_curator_wrapper_cites_source_urls_on_grounded_connected_kb_cases():
+    wrapper_text = _read("src/skills/evaluations/curate/SKILL.md")
+    wrapper = " ".join(wrapper_text.split())
+    normalized_lower = wrapper.lower()
+
+    # 2a: positive/boundary connected-KB cases carry the grounding document's
+    # URL in both a `Source URL` CSV column and an `extensionData.sourceUrl` key.
+    assert "Source URL" in wrapper
+    assert "extensionData.sourceUrl" in wrapper or "`sourceUrl`" in wrapper
+    assert "positive" in normalized_lower and "boundary" in normalized_lower
+
+    # The value comes from the grounding hit's `sourceUrl` produced by the
+    # connected-KB search shim.
+    assert "scripts/search_connected_kb.py" in wrapper
+    assert "sourceUrl" in wrapper
+
+    # Citation is BLANK for negative cases and for ALL local-file cases.
+    assert "never for negative" in normalized_lower or "never on negative" in normalized_lower
+    assert "blank" in normalized_lower
+    assert "local-file" in normalized_lower
+
+    # Layered on top of the vendored Step 6 shape without editing the curator body.
+    assert "without editing the curator" in normalized_lower
+    assert "step 6" in normalized_lower
+
+
+def test_curator_wrapper_generates_conditional_citation_adherence_cases():
+    wrapper_text = _read("src/skills/evaluations/curate/SKILL.md")
+    wrapper = " ".join(wrapper_text.split())
+    normalized_lower = wrapper.lower()
+
+    # 2b: citation-adherence graded cases are generated ONLY when the resolved
+    # agent instructions actually require citing sources.
+    assert "citation-adherence" in normalized_lower
+    assert "only when" in normalized_lower or "only if" in normalized_lower
+    assert "require" in normalized_lower and "citing sources" in normalized_lower
+
+    # They draw from positive/boundary grounding and NEVER from negatives.
+    assert "positive" in normalized_lower and "boundary" in normalized_lower
+    assert "never" in normalized_lower and "negative" in normalized_lower
+
+    # Their expected output describes citation as observable behavior without
+    # naming a backend system (consistent with the vendored no-backend rule).
+    assert "observable" in normalized_lower
+    assert "backend" in normalized_lower
