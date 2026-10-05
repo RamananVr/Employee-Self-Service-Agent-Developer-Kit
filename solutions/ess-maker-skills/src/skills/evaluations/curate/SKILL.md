@@ -34,11 +34,39 @@ Collect missing inputs one at a time:
    time, waiting after each: for local mode, ask for the folder/files path;
    for connected mode, confirm which connected knowledge base or tool to use
    (only ask this if more than one is available in the session).
-3. In both modes, the agent-instructions file is required. If it is missing,
-   ask exactly one question for the agent instructions, then wait.
+3. In both modes, the agent instructions are required. Do not ask the maker
+   for an agent-instructions file. Instead, resolve them live from the bound
+   agent (see "Resolve and confirm the agent instructions" below) and require
+   explicit maker confirmation before using them.
 
 Do not infer a path, continue with one input, combine the questions, skip the
 mode question, or ask for a scenario instead.
+
+### Resolve and confirm the agent instructions
+
+In both modes, the agent instructions are required. Do not ask the maker for
+an agent-instructions file and do not infer a path to one. Before proceeding
+into generation, run the resolver CLI shim from `solutions/ess-maker-skills/`
+to obtain the instructions from the bound agent:
+
+```powershell
+py -3.12 scripts/resolve_agent_instructions.py
+```
+
+Parse its single JSON result. Never proceed into the curator body's grounding
+before this gate completes.
+
+- `status == "ok"` — show the maker the resolved instructions and require
+  explicit confirmation before proceeding. The confirmed instruction text is
+  the agent-instructions grounding input the curator body expects; use exactly
+  that confirmed text to ground the curator's instruction-adherence cases.
+- `status == "not_found"` — stop and report that no agent instructions could
+  be resolved from the bound agent. Do not fall back to prompting for an
+  agent-instructions file and do not silently continue. The maker fixes setup
+  (for example by running `/setup`) and retries.
+- `status == "error"` — stop and report the exact reason from the shim's
+  `error` field. Do not fall back to prompting for an agent-instructions file
+  and do not silently continue. The maker fixes setup and retries.
 
 ## Step 2: Confirm the vendored curator is present
 

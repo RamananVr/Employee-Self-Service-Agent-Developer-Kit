@@ -74,6 +74,36 @@ def test_curator_wrapper_resolves_and_confirms_connected_kb_connection():
     assert "pick one or more" in normalized_lower
 
 
+def test_curator_wrapper_resolves_and_confirms_agent_instructions():
+    wrapper_text = _read("src/skills/evaluations/curate/SKILL.md")
+    wrapper = " ".join(wrapper_text.split())
+    normalized_lower = wrapper.lower()
+
+    # Step 1 resolves live agent instructions via the CLI shim instead of
+    # asking the maker for an agent-instructions file.
+    assert "scripts/resolve_agent_instructions.py" in wrapper
+    assert "ask exactly one question for the agent instructions" not in normalized_lower
+    assert "ask for the agent instructions file" not in normalized_lower
+
+    # status == "ok" requires explicit maker confirmation of the resolved
+    # instructions before proceeding.
+    assert '`status == "ok"`' in wrapper
+    assert "require" in normalized_lower and "explicit confirmation" in normalized_lower
+    assert "resolved instructions" in normalized_lower
+
+    # status == "not_found" and status == "error" both stop and report, with
+    # no fallback to prompting for a file.
+    assert '`status == "not_found"`' in wrapper
+    assert '`status == "error"`' in wrapper
+    assert "stop and report" in normalized_lower
+
+    # Ordering: the resolver shim runs before the hand-off into the curator
+    # body's grounding.
+    assert wrapper.index("scripts/resolve_agent_instructions.py") < wrapper.index(
+        "Follow the vendored curator skill"
+    )
+
+
 def test_curator_wrapper_defines_bounded_servicenow_retrieval_sequence():
     wrapper = _read("src/skills/evaluations/curate/SKILL.md")
     normalized = " ".join(wrapper.split())
@@ -557,7 +587,7 @@ def test_curator_wrapper_blocks_on_missing_input_or_failed_validation():
     wrapper = _read("src/skills/evaluations/curate/SKILL.md")
     normalized = " ".join(wrapper.split()).lower()
 
-    assert "ask exactly one question" in normalized
+    assert "stop and report" in normalized
     assert "wait" in normalized
     assert "curator is not available in this workspace" in normalized
     assert "missing vendored curator file" in normalized
