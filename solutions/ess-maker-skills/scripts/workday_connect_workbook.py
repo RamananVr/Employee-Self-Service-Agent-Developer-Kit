@@ -143,6 +143,7 @@ def _sheet_xml(
 
 def _zip_write(archive: ZipFile, name: str, content: str) -> None:
     info = ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
+    info.create_system = 3
     info.compress_type = ZIP_DEFLATED
     info.external_attr = 0o600 << 16
     archive.writestr(info, content.encode("utf-8"))

@@ -496,8 +496,31 @@ def test_connections_are_proven_before_runtime_apply() -> None:
     assert "**REST base URL**" in text
     assert "**Tenant name \\***" in text
     assert "not the Microsoft Entra application ID" in text
-    assert "ESS Workday Runtime**" in text
-    assert "ESS Workday Runtime REST Execution**" in text
+    maker_connection_steps = text.split(
+        "Connect both maker-visible entries",
+        1,
+    )[1].split(
+        "Internal execution note",
+        1,
+    )[0]
+    assert "displayed as **Workday**" in maker_connection_steps
+    assert "ESS Workday Runtime" not in maker_connection_steps
+    assert "ESS Workday Runtime REST Execution" not in maker_connection_steps
+    assert maker_connection_steps.index("Select **Connect**") < (
+        maker_connection_steps.index(
+            "Select the already-created Workday connection"
+        )
+    )
+    assert maker_connection_steps.index(
+        "Select the already-created Workday connection"
+    ) < maker_connection_steps.index("Select **Manage**")
+    assert maker_connection_steps.index("Select **Manage**") < (
+        maker_connection_steps.index(
+            "Enable **Allow permission to share parameters**"
+        )
+    )
+    assert "both entries displayed as Workday" in text
+    assert "Confirm Workday connection" in text
     assert "Do not ask the maker or administrator to provide them again" in normalized
     assert "Do not request or collect a Workday password" in text
     assert "Reuse a healthy existing connection" in text
