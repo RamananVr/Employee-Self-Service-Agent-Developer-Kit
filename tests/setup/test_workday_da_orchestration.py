@@ -499,19 +499,19 @@ def test_workday_admin_handoff_is_provider_first_and_completion_gated() -> None:
     non_entra_branch = text.index(
         "For **Okta**, **Ping Identity**, or **Another sign-in provider**"
     )
-    capture_table = text.index("Before the numbered tasks")
+    workbook = text.index("Share `workbookFile`")
     existing_handoff = text.index("### Existing Microsoft Entra federation handoff")
     coexistence_handoff = text.index(
         "### Existing non-Entra federation coexistence or transition handoff"
     )
     greenfield_handoff = text.index("### New Microsoft Entra federation handoff")
     completion = text.index(
-        "Has the Workday administrator completed every applicable task"
+        "Has the Workday administrator completed their task"
     )
     form = text.index('"header": "SAML row settings"')
 
     assert packet < provider_question < non_entra_branch
-    assert non_entra_branch < capture_table < existing_handoff
+    assert non_entra_branch < workbook < existing_handoff
     assert existing_handoff < coexistence_handoff < greenfield_handoff
     assert greenfield_handoff < completion < form
     assert "This question selects a safe handoff branch" in text
@@ -520,10 +520,14 @@ def test_workday_admin_handoff_is_provider_first_and_completion_gated() -> None:
     )
     assert "resume the same handoff after approval" in normalized
     assert "Only after **Yes**\nmay the skill collect evidence" in text
-    assert "share this whole section" in text
-    assert "both the capture guide and\nthe return worksheet" in text
-    assert "Leave every cell in **Your\ntenant values** blank" in text
-    assert "do not repeat an **Information to return to the maker**" in text
+    assert "share these steps and the workbook" in text
+    assert "workbook is the single capture worksheet" in normalized
+    assert "fill every cell in the **Your tenant values** column" in normalized
+    assert "Upload the completed Workday administrator workbook" in text
+    assert (
+        "do not repeat an **Information to return to the maker**"
+        in normalized
+    )
     assert "This phase starts only after Microsoft Entra sign-off is complete" in text
     assert "Do not direct the maker back to the Entra" in text
     assert "already delivered through the approved customer channel" in text
@@ -702,7 +706,7 @@ def test_capability_claims_match_controller_surface() -> None:
     assert "Create x509 Public Key" in tenant
     assert "Client Grant Type" in tenant
     assert "Include Workday Owned Scope" in tenant
-    assert "Confirm network readiness" in tenant
+    assert "Confirm network readiness" not in tenant
     assert (
         "does not create physical connector connections"
         in (normalized["power_platform"])
