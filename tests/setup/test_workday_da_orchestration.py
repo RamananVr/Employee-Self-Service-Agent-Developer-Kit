@@ -85,6 +85,43 @@ def test_role_availability_is_state_aware_at_phase_boundary() -> None:
             "allowFreeformInput": False,
         }
     ] in forms
+    expected_privilege_forms = [
+        (
+            "Connection creation privilege",
+            (
+                "Do you have the Power Platform Environment Maker privilege "
+                "and package installation access to create the Workday "
+                "connections?"
+            ),
+        ),
+        (
+            "Maker validation privilege",
+            (
+                "Do you have the Environment Maker privilege to perform "
+                "maker validation in the Copilot Studio Test pane?"
+            ),
+        ),
+    ]
+    for header, question in expected_privilege_forms:
+        assert [
+            {
+                "header": header,
+                "question": question,
+                "options": [
+                    {
+                        "label": (
+                            "Yes, I have the required privilege and access"
+                        )
+                    },
+                    {
+                        "label": (
+                            "No, I do not have the required privilege or access"
+                        )
+                    },
+                ],
+                "allowFreeformInput": False,
+            }
+        ] in forms
     assert [
         {
             "header": "Required access",
@@ -99,6 +136,7 @@ def test_role_availability_is_state_aware_at_phase_boundary() -> None:
             "allowFreeformInput": False,
         }
     ] in forms
+    assert "When `nextPhaseId` is `preflight` or `runtime`" in skill
     assert "If controller status is `ready`, skip the availability question" in skill
     for phase_id in (
         "preflight",
@@ -113,8 +151,11 @@ def test_role_availability_is_state_aware_at_phase_boundary() -> None:
             skill,
             re.MULTILINE,
         )
-    assert "Leave the selection unset" in skill
-    assert "not proof that the signed-in account has a required role" in skill
+    assert "Leave every selection unset" in skill
+    assert (
+        "None is proof that the signed-in account has the required role"
+        in normalized_skill
+    )
     assert (
         "phase-specific live checks or structured administrator evidence remain"
         in " ".join(skill.split())
@@ -133,9 +174,13 @@ def test_role_availability_is_state_aware_at_phase_boundary() -> None:
     )
     assert "When `nextPhaseId` is `entra`, dispatch" in skill
     assert "presents the guided handoff" in skill
-    assert "stop before dispatching the next\nphase" in skill
-    assert "no phase progress or target configuration was changed" in skill
+    assert "stop before dispatching the next phase" in normalized_skill
+    assert (
+        "no phase progress or target configuration was changed"
+        in normalized_skill
+    )
     assert "do not offer to bypass the role requirement" in " ".join(skill.split())
+    assert "rerun the skill using the authorized maker account" in normalized_skill
     assert (
         "do not repeat the question while `nextPhaseId` remains unchanged"
         in " ".join(skill.split())

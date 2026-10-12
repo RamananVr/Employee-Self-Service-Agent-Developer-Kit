@@ -300,8 +300,8 @@ When `nextPhaseId` is `workday-admin`, show only its row and use this exact
 ]
 ```
 
-For every other returned `nextPhaseId` except `entra`, show only its row and
-use this exact `vscode_askQuestions` form before dispatching that phase:
+When `nextPhaseId` is `preflight` or `runtime`, show only its row and use this
+exact `vscode_askQuestions` form before dispatching that phase:
 
 ```json
 [
@@ -317,10 +317,45 @@ use this exact `vscode_askQuestions` form before dispatching that phase:
 ]
 ```
 
-Leave the selection unset. This is an availability self-attestation for
-planning, not proof that the signed-in account has a required role. The
-phase-specific live checks or structured administrator evidence remain
-authoritative.
+When `nextPhaseId` is `connections`, show only its row and use this exact
+`vscode_askQuestions` form before dispatching that phase:
+
+```json
+[
+  {
+    "header": "Connection creation privilege",
+    "question": "Do you have the Power Platform Environment Maker privilege and package installation access to create the Workday connections?",
+    "options": [
+      { "label": "Yes, I have the required privilege and access" },
+      { "label": "No, I do not have the required privilege or access" }
+    ],
+    "allowFreeformInput": false
+  }
+]
+```
+
+When `nextPhaseId` is `maker-validation`, show only its row and use this exact
+`vscode_askQuestions` form before dispatching that phase:
+
+```json
+[
+  {
+    "header": "Maker validation privilege",
+    "question": "Do you have the Environment Maker privilege to perform maker validation in the Copilot Studio Test pane?",
+    "options": [
+      { "label": "Yes, I have the required privilege and access" },
+      { "label": "No, I do not have the required privilege or access" }
+    ],
+    "allowFreeformInput": false
+  }
+]
+```
+
+Leave every selection unset. The Connections and Maker validation answers are
+privilege self-attestations for routing; the Preflight and Runtime answer is an
+availability self-attestation. None is proof that the signed-in account has
+the required role. The phase-specific live checks or structured administrator
+evidence remain authoritative.
 
 After the maker confirms the Workday administrator is engaged, the Workday
 phase presents the applicable steps in chat and shares the checked-in
@@ -333,11 +368,16 @@ not currently required. In particular, require the Workday Administrator only
 when `nextPhaseId` is `workday-admin`; a healthy reused tenant foundation
 continues at Connections without that role.
 
-If the maker selects either negative option, stop before dispatching the next
-phase. Explain that no phase progress or target configuration was changed and
-ask them to return when the required person can participate. Do not request
-the person's name, credentials, or other identifying information, and do not
-offer to bypass the role requirement.
+If the maker selects a negative administrator-engagement option, stop before
+dispatching the next phase and ask them to return when that administrator can
+participate. If the maker selects a negative maker-privilege option, stop and
+ask them to return after the required privilege or access is granted, or to
+rerun the skill using the authorized maker account. If the maker selects the
+negative generic availability option, ask them to return when the required
+people are available. In every case, explain that no phase progress or target
+configuration was changed. Do not request a person's name, credentials, or
+other identifying information, and do not offer to bypass the role
+requirement.
 
 If the maker selects either affirmative option, dispatch the next phase below.
 Within the same invocation, do not repeat the question while `nextPhaseId`
