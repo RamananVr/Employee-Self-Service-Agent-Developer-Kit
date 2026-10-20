@@ -1151,13 +1151,108 @@ def test_entra_finalization_uses_retained_partial_evidence_and_replays(
     )
 
     assert result["verified"] is True
+    assert result["tenantFoundationReused"] is False
     assert replay["replayed"] is True
+    assert replay["tenantFoundationReused"] is False
     assert drift["driftDetected"] is True
     state = store.load()
     assert state["phases"]["entra"]["status"] == "pending"
     assert state["identifiers"]["entraAppId"] == (
         "88888888-8888-8888-8888-888888888888"
     )
+
+
+def test_entra_signoff_requires_fresh_workday_handoff_despite_matching_foundation(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    import workday_connect
+    from workday_connect_contract_common import WorkdayConnectContractError
+    from workday_connect_store import (
+        WorkdayConnectStore,
+        WorkdayConnectStoreError,
+    )
+
+    profile_calls = []
+    monkeypatch.setattr(
+        workday_connect,
+        "_run_profile_gate",
+        lambda _store, profile: profile_calls.append(profile),
+    )
+    store = WorkdayConnectStore(tmp_path)
+    store.initialize()
+    store.merge_section(
+        "scope",
+        {
+            "entraTenantId": "00000000-0000-0000-0000-000000000000",
+            "workdayTenant": "contoso_impl",
+            "environmentId": "environment-a",
+        },
+    )
+    args = SimpleNamespace(verification_file=None, verification_json="{}")
+    workday_args = SimpleNamespace(response_file=None, response_json="{}")
+    _complete_preflight(store)
+    _advance_administrator_to_completion(store, "entra")
+    store.record_administrator_progress(
+        "entra",
+        "collecting-evidence",
+        valid_fields=_entra_partial_evidence(),
+    )
+    workday_connect._record_entra(args, store)
+    _advance_administrator_to_completion(store, "workday-admin")
+    store.record_administrator_progress(
+        "workday-admin",
+        "collecting-evidence",
+        valid_fields=_workday_partial_evidence(),
+    )
+    workday_connect._record_workday_admin(workday_args, store)
+    foundation = store.load()["tenantFoundation"]
+    profile_calls.clear()
+
+    store.merge_section("scope", {"environmentId": "environment-b"})
+    _complete_preflight(store)
+    _advance_administrator_to_completion(store, "entra")
+    store.record_administrator_progress(
+        "entra",
+        "collecting-evidence",
+        valid_fields=_entra_partial_evidence(),
+    )
+    result = workday_connect._record_entra(args, store)
+    replay = workday_connect._record_entra(args, store)
+
+    assert result["verified"] is True
+    assert result["tenantFoundationReused"] is False
+    assert replay["replayed"] is True
+    assert replay["tenantFoundationReused"] is False
+    assert result["status"]["nextPhaseId"] == "workday-admin"
+    state = store.load()
+    assert state["tenantFoundation"] == foundation
+    assert state["phases"]["entra"]["status"] == "complete"
+    assert state["phases"]["workday-admin"]["status"] == "pending"
+    assert state["phases"]["workday-admin"]["completedActions"] == []
+    assert state["phases"]["workday-admin"]["evidence"] == []
+    administrator = state["phases"]["workday-admin"]["administrator"]
+    assert administrator["partialEvidence"] == {}
+    assert profile_calls == []
+    with pytest.raises(WorkdayConnectStoreError, match="completed the presented"):
+        workday_connect._record_workday_admin(workday_args, store)
+
+    _advance_administrator_to_completion(store, "workday-admin")
+    with pytest.raises(WorkdayConnectContractError, match="identityProviderOutcome"):
+        workday_connect._record_workday_admin(workday_args, store)
+    store.record_administrator_progress(
+        "workday-admin",
+        "collecting-evidence",
+        valid_fields=_workday_partial_evidence(),
+    )
+    workday_result = workday_connect._record_workday_admin(workday_args, store)
+
+    assert workday_result["verified"] is True
+    assert workday_result["status"]["nextPhaseId"] == "connections"
+    assert profile_calls == ["workday-da:external-prerequisites"]
+    replay_after_workday = workday_connect._record_entra(args, store)
+    assert replay_after_workday["tenantFoundationReused"] is False
+    assert store.load()["phases"]["workday-admin"]["status"] == "complete"
 
 
 def test_workday_finalization_uses_retained_partial_evidence_and_replays(

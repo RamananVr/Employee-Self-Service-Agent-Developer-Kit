@@ -312,6 +312,11 @@ Pass the uploaded workbook path directly:
 python scripts/workday_connect.py record-entra --verification-worksheet-file "<uploaded-entra-workbook-path>"
 ```
 
+Successful Entra validation completes only the Entra administrator phase.
+Continue with fresh Workday administrator engagement, completion confirmation,
+and the completed Workday administrator workbook. Matching saved tenant
+settings do not waive that handoff or establish Workday-side completion.
+
 If an exact replay matches the persisted evidence, the controller returns
 `replayed: true`. If a completed phase now returns `driftDetected: true`, the
 controller has reopened Entra and invalidated downstream deployment state.

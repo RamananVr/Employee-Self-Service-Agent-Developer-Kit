@@ -27,15 +27,20 @@ After the maker confirms the Workday administrator is engaged, tell the maker:
 > administrator to follow the applicable steps, fill the workbook in parallel,
 > and return the completed workbook to you.
 
-If `record-entra` reports `tenantFoundationReused: true`, do not show this
-handoff and do not require the Workday administrator again. Continue at
-Connections. Show only the affected Workday remediation step if a later
-connection or employee test proves that the stored foundation has drifted.
+After `record-entra` succeeds, always require fresh Workday administrator
+confirmation and a completed Workday administrator workbook, even when the
+Entra settings match a saved tenant foundation. An Entra workbook does not
+verify Workday-side configuration. Do not mark this phase complete or continue
+at Connections until the Workday response passes validation. Existing healthy
+settings may be confirmed rather than changed.
 
-When no matching foundation can be reused, identify the current federation
-before rendering a detailed handoff. The phase boundary must already have
-asked **Have you looped in the Workday administrator?** and must not dispatch
-this guide until the maker confirms engagement. Do not add a second
+Only a separately controller-verified Test or Production promotion may skip
+these administrator handoffs using the recorded tenant foundation.
+
+Identify the current federation before rendering a detailed handoff. The
+phase boundary must already have asked
+**Have you looped in the Workday administrator?** and must not dispatch this
+guide until the maker confirms engagement. Do not add a second
 engagement question here. Use `identityProviderQuestion` from the packet in
 one structured `vscode_askQuestions` call. Present its options unchanged and
 leave the selection unset.

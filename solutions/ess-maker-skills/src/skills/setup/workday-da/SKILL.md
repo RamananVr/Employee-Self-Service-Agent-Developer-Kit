@@ -110,9 +110,10 @@ work. Publishing and non-maker validation happen after this guided lifecycle.
   maker-authenticated Graph reread. Keep setup blocked until the exact target
   and tenant relationship can be verified.
 - Ask the administrator to repeat only missing, changed, or unhealthy settings.
-  A different environment, agent, or maker account may require current
-  confirmation, but it must not make the administrator repeat healthy tenant
-  configuration.
+  Outside the verified promotion path, every fresh Entra sign-off must be
+  followed by fresh Workday administrator confirmation and a completed
+  workbook. Matching a saved tenant foundation does not complete that phase.
+  Healthy settings may be confirmed without repeating configuration changes.
 - Never reuse foundation evidence across a different Entra tenant, Workday
   tenant, SAML Service Provider ID, Entra application, or signing certificate.
 - Preserve the full administrator guide even on the reuse path, but show only
@@ -366,7 +367,8 @@ retype the administrator values.
 Do not include people from completed phases or remediation-only roles that are
 not currently required. In particular, require the Workday Administrator only
 when `nextPhaseId` is `workday-admin`; a healthy reused tenant foundation
-continues at Connections without that role.
+on a controller-verified Test or Production promotion continues at Connections
+without that role. A regular Entra workbook return must not take this shortcut.
 
 If the maker selects a negative administrator-engagement option, stop before
 dispatching the next phase and ask them to return when that administrator can

@@ -703,10 +703,7 @@ def _record_entra(
             return {
                 "verified": True,
                 "replayed": True,
-                "tenantFoundationReused": (
-                    state["phases"]["workday-admin"]["status"]
-                    == "complete"
-                ),
+                "tenantFoundationReused": False,
                 "status": store.status(),
             }
         store.merge_section("identifiers", result["identifiers"])
@@ -753,19 +750,9 @@ def _record_entra(
         once_per_lifecycle=True,
     )
     store.set_phase_status("entra", "complete")
-    _, reused = store.restore_workday_foundation()
-    if reused:
-        _run_profile_gate(store, "workday-da:external-prerequisites")
-        store.set_phase_status("workday-admin", "complete")
-        store.record_lifecycle_event(
-            "roles-attested",
-            phase="workday-admin",
-            outcome="success",
-            once_per_lifecycle=True,
-        )
     return {
         "verified": True,
-        "tenantFoundationReused": reused,
+        "tenantFoundationReused": False,
         "status": store.status(),
     }
 

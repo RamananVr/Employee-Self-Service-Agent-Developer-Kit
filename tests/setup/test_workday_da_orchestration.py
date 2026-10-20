@@ -169,9 +169,16 @@ def test_role_availability_is_state_aware_at_phase_boundary() -> None:
         "only when `nextPhaseId` is `workday-admin`" in normalized_skill
     )
     assert (
-        "healthy reused tenant foundation continues at Connections"
+        "healthy reused tenant foundation on a controller-verified Test or "
+        "Production promotion continues at Connections"
         in normalized_skill
     )
+    assert (
+        "always require fresh Workday administrator confirmation and a "
+        "completed Workday administrator workbook"
+        in " ".join(tenant.split())
+    )
+    assert "tenantFoundationReused: true" not in tenant
     assert "When `nextPhaseId` is `entra`, dispatch" in skill
     assert "presents the guided handoff" in skill
     assert "stop before dispatching the next phase" in normalized_skill
