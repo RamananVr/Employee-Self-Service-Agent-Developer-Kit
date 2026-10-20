@@ -102,6 +102,10 @@ ranges. If the endpoints are already reachable, do not require a firewall
 change. Use the later connection and runtime tests as the reachability
 evidence.
 
+The guided external-prerequisites and final readiness profiles do not include
+the standalone `WD-NET-001` firewall attestation. A completed Workday workbook
+does not prove network reachability or satisfy that independent manual check.
+
 After rendering the complete handoff, record that it was presented and is
 waiting for the administrator:
 

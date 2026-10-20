@@ -49,6 +49,22 @@ WORKDAY_API_CLIENT_OUTCOMES = {
     "existing-client-verified",
     "new-client-registered",
 }
+_AUTHENTICATION_POLICY_CHOICES = {
+    (
+        "An existing active policy scopes the ESS OAuth client "
+        "and allows SAML for the intended employees"
+    ): "existing-active-policy",
+    (
+        "A reviewed policy scoped to the ESS OAuth client was activated"
+    ): "reviewed-policy-activated",
+}
+_ROLLOUT_CHOICES = {
+    "Entire workforce - All Employees access is configured": "entire-workforce",
+    (
+        "Limited or test population - the intended Workday "
+        "security group and test employee access are configured"
+    ): "limited-or-test",
+}
 WORKDAY_REQUIRED_FUNCTIONAL_AREA_SCOPES = (
     "Core Payroll",
     "Organizations and Roles",
@@ -193,14 +209,7 @@ def parse_workday_admin_return_worksheet(
             values,
             "Authentication policy",
             {
-                (
-                    "An existing active policy scopes the ESS OAuth client "
-                    "and allows SAML for the intended employees"
-                ): "existing-active-policy",
-                (
-                    "A reviewed policy scoped to the ESS OAuth client was "
-                    "activated"
-                ): "reviewed-policy-activated",
+                **_AUTHENTICATION_POLICY_CHOICES,
                 "An existing active policy allows SAML": "existing-active-policy",
                 "A reviewed policy was activated": "reviewed-policy-activated",
             },
@@ -218,15 +227,7 @@ def parse_workday_admin_return_worksheet(
         "rolloutType": _worksheet_choice(
             values,
             "Rollout",
-            {
-                "Entire workforce - All Employees access is configured": (
-                    "entire-workforce"
-                ),
-                (
-                    "Limited or test population - the intended Workday "
-                    "security group and test employee access are configured"
-                ): "limited-or-test",
-            },
+            _ROLLOUT_CHOICES,
         ),
         "publicWorkerReportsOutcome": _worksheet_choice(
             values,
@@ -547,8 +548,8 @@ def build_workday_admin_packet(
                 "instruction": (
                     "Confirm the policy applies to the ESS OAuth client "
                     "identity and allows SAML for the intended employees. "
-                    "Record whether that rule was already active or a "
-                    "reviewed policy was activated."
+                    "Enter exactly one of: "
+                    + "; ".join(_AUTHENTICATION_POLICY_CHOICES)
                 ),
                 "exampleValue": (
                     "An existing active policy scopes the ESS OAuth client "
@@ -559,7 +560,10 @@ def build_workday_admin_packet(
                 "information": "Rollout",
                 "fields": ["rolloutType"],
                 "portalLocation": "Workday employee security group assignment",
-                "instruction": "Record the configured employee population.",
+                "instruction": (
+                    "Record the configured employee population. "
+                    "Enter exactly one of: " + "; ".join(_ROLLOUT_CHOICES)
+                ),
                 "exampleValue": (
                     "Limited or test population - the intended Workday "
                     "security group and test employee access are configured"

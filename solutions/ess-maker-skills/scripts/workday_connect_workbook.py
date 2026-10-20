@@ -12,6 +12,7 @@ import tempfile
 from typing import Any, Iterable, Mapping, Sequence
 from xml.sax.saxutils import escape
 from zipfile import BadZipFile, ZIP_DEFLATED, ZipFile, ZipInfo
+import zlib
 
 from defusedxml import ElementTree as ET
 from defusedxml.common import DefusedXmlException
@@ -523,6 +524,11 @@ def read_administrator_workbook(path: Path) -> str:
             raise WorkdayConnectWorkbookError(
                 "Administrator workbook is missing its Worksheet content."
             ) from exc
+    except (BadZipFile, zlib.error) as exc:
+        raise WorkdayConnectWorkbookError(
+            "Administrator workbook contains corrupt ZIP content. "
+            "Upload an intact completed .xlsx workbook."
+        ) from exc
     finally:
         archive.close()
 

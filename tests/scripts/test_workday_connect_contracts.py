@@ -448,6 +448,83 @@ def test_administrator_workbook_rejects_changed_headers(
         read_administrator_workbook(path)
 
 
+@pytest.mark.parametrize(
+    "member_name", ["xl/workbook.xml", "xl/worksheets/sheet2.xml"]
+)
+def test_administrator_workbook_reports_corrupt_member_as_validation_error(
+    tmp_path: Path,
+    member_name: str,
+) -> None:
+    packet = build_entra_handoff(_state())
+    path = write_administrator_workbook(
+        tmp_path / "corrupt.xlsx",
+        title="Administrator handoff",
+        administrator_role=packet["administratorRole"],
+        actions=packet["actions"],
+        capture_instructions=packet["captureInstructions"],
+    )
+    with ZipFile(path) as archive:
+        members = {name: archive.read(name) for name in archive.namelist()}
+    with ZipFile(path, "w") as archive:
+        for name, content in members.items():
+            archive.writestr(name, content)
+    with ZipFile(path) as archive:
+        member = archive.getinfo(member_name)
+    payload = bytearray(path.read_bytes())
+    offset = member.header_offset + 30 + len(member.filename.encode("utf-8"))
+    payload[offset] ^= 1
+    path.write_bytes(payload)
+
+    with pytest.raises(WorkdayConnectWorkbookError, match="corrupt"):
+        read_administrator_workbook(path)
+
+
+@pytest.mark.parametrize(
+    ("label", "answer", "field", "outcome"),
+    [
+        (
+            "Authentication policy",
+            "A reviewed policy scoped to the ESS OAuth client was activated",
+            "authenticationPolicyOutcome",
+            "reviewed-policy-activated",
+        ),
+        (
+            "Rollout",
+            "Entire workforce - All Employees access is configured",
+            "rolloutType",
+            "entire-workforce",
+        ),
+    ],
+)
+def test_workday_workbook_explains_alternative_successful_answers(
+    tmp_path: Path,
+    label: str,
+    answer: str,
+    field: str,
+    outcome: str,
+) -> None:
+    _, path = generate_workbooks(tmp_path)
+    with ZipFile(path) as archive:
+        worksheet_xml = archive.read("xl/worksheets/sheet2.xml").decode("utf-8")
+    assert answer in worksheet_xml
+    packet = build_workday_admin_packet(_workday_state())
+    answers = _worksheet_answers(_workday_worksheet())
+    answers[label] = answer
+    write_administrator_workbook(
+        path,
+        title="Administrator handoff",
+        administrator_role=packet["administratorRole"],
+        actions=packet["actions"],
+        capture_instructions=packet["captureInstructions"],
+        answers=answers,
+    )
+    response = parse_workday_admin_return_worksheet(
+        _workday_state(), read_administrator_workbook(path),
+    )
+    result = validate_workday_admin_response(_workday_state(), response)
+    assert result["evidence"][field] == outcome
+
+
 def test_administrator_workbook_accepts_absolute_package_relationships(
     tmp_path: Path,
 ) -> None:
