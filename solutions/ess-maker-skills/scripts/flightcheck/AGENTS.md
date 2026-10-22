@@ -30,7 +30,10 @@ single Manual verification section with their ID, purpose, owner, detailed
 steps and missing-setting guidance; they do not require an approval form.
 Use always-visible single-column test cases with inline purpose/result/owner/
 next-step labels. Keep the colored status totals without a duplicate totals
-table; only supporting technical evidence needs a disclosure.
+table. Put technical observations in a bottom appendix with independent
+FlightCheck-ID search and bidirectional finding links. Do not repeat visible
+Manual instructions or common scope metadata there; keep the full original JSON
+unchanged and retain distinct observations, read limitations and errors.
 
 `da_inventory.csv` attaches typed `DAValidation` metadata to the existing
 `REGISTRY`. It records executable definitions and explicit replaced, legacy,

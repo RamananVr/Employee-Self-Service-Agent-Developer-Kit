@@ -792,6 +792,8 @@ def test_customer_report_unifies_categories_and_exposes_purpose_status_and_steps
         assert "<b>Result:</b> " in finding
         assert "<b>Who should check or fix this:</b> " in finding
         assert f'<b>{"Verification steps" if row.status == "Manual" else "Next step"}:</b> ' in finding
+        assert '<details' not in finding and '<pre>' not in finding
+        assert 'href="#technical-' in finding
     assert '<details class="finding"' not in html
     assert "Expand details" not in html and "Collapse details" not in html
     assert 'id="expand-all"' not in html and 'id="collapse-all"' not in html
@@ -816,6 +818,63 @@ def test_customer_report_unifies_categories_and_exposes_purpose_status_and_steps
     assert "<p>Agent owner</p>" not in html
     assert 'data-kind="unverified" data-filter-group="warnings"' in html
     assert 'data-kind="manual" data-filter-group="manual"' in html
+
+
+def test_technical_appendix_preserves_observations_without_repeating_manual_metadata(tmp_path):
+    from html import unescape
+
+    instructions = ["Inspect the intended policy.", "Compare the permitted employee access."]
+    reason = "This setting needs manual inspection."
+    purpose = "Published employee access"
+    metadata = {
+        "agentSlug": "hr", "verificationScope": {"agentId": ENV_ID, "targetVerified": True},
+        "apiContract": "manual: no supported automatic assertion", "assertionScope": "selected-agent",
+        "manualVerificationSteps": instructions, "ifMissingOrIncorrect": "Repair only the confirmed policy mismatch.",
+        "verificationReason": reason, "expectedSetting": purpose,
+    }
+    rows = [
+        CheckResult("DA-RUNTIME-001", "Runtime", "High", "Manual", purpose, reason,
+                    evidence=metadata, doc_link="https://learn.microsoft.com/example"),
+        CheckResult("PRE-001", "Licensing", "High", "Manual", "License inventory", "Read denied.",
+                    evidence={**metadata, "httpStatus": 403, "readLimitation": "Inventory read denied.",
+                              "expectedSetting": "Specific expected value", "verificationReason": "Distinct read context"}),
+        CheckResult("CHECK-ERROR", "Agent", "High", "Error", "Service observation", "Read failed.",
+                    evidence={"httpStatus": 503, "detail": "<script>unexpected</script>",
+                              "verificationScope": {"targetVerified": False}}),
+    ]
+    runner = FlightCheckRunner(scope="full")
+    runner.register("Support appendix", lambda _: rows)
+    result = runner.run()
+    result.diagnostic_only = True
+    original = deepcopy(result)
+    save_results(result, str(tmp_path))
+    assert result == original
+    payload = json.loads((tmp_path / "results.json").read_text(encoding="utf8"))
+    assert payload["results"][0]["evidence"] == metadata
+    html = (tmp_path / "report.html").read_text(encoding="utf8")
+    assert html.index('id="technical-details"') > html.index('id="manual-verification"')
+    assert 'id="technical-search"' in html and 'id="no-technical-match"' in html
+    assert "Recorded status:" not in html
+    assert "manualVerificationSteps" not in html
+    assert html.count("Inspect the intended policy.") == 2
+    entries = re.findall(r'<details class="technical-entry"[^>]*>(.*?)</details>', html, re.S)
+    assert len(entries) == len(rows)
+    assert "No additional technical observations" in entries[0]
+    assert "<pre>" not in entries[0]
+    assert json.loads(unescape(re.search(r"<pre>(.*?)</pre>", entries[1], re.S)[1])) == {
+        "httpStatus": 403, "readLimitation": "Inventory read denied.",
+        "expectedSetting": "Specific expected value", "verificationReason": "Distinct read context",
+    }
+    assert json.loads(unescape(re.search(r"<pre>(.*?)</pre>", entries[2], re.S)[1])) == rows[2].evidence
+    assert "<script>unexpected</script>" not in html
+    for index, row in enumerate(rows):
+        assert f'id="technical-{index}" data-check-id="{row.checkpoint_id}"' in html
+        assert f'href="#finding-{index}"' in entries[index]
+    finding = next(
+        item for item in re.findall(r'<article class="finding"[^>]*>(.*?)</article>', html, re.S)
+        if ">DA-RUNTIME-001</code>" in item
+    )
+    assert "Setup documentation" in finding
 
 
 def test_customer_header_hides_internal_metadata_without_changing_legacy_header():

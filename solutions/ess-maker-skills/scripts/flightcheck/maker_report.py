@@ -162,12 +162,37 @@ def _render_finding(row, index):
         f'<p><b>{"Verification steps" if manual else "Next step"}:</b> {_prose(next_step)}</p>'
         + (f'<p><b>If missing or incorrect:</b> {_prose(missing)}</p>' if isinstance(missing, str) and missing else "")
         + '</div>'
-        '<details class="support-details"><summary>Technical details</summary>'
-        f'<p>Recorded status: {escape(row.status)}.</p>'
-        + (f'<pre>{escape(_mask_sensitive(json.dumps(row.evidence, indent=2)))}</pre>' if row.evidence else "")
-        + (f'<p><a href="{escape(row.doc_link, quote=True)}" target="_blank" rel="noopener noreferrer">Documentation</a></p>'
+        f'<p class="finding-links"><a href="#technical-{index}">Technical details</a>'
+        + (f' | <a href="{escape(row.doc_link, quote=True)}" target="_blank" rel="noopener noreferrer">Setup documentation</a>'
            if row.doc_link.startswith(("https://", "http://")) else "")
-        + '</details></article>'
+        + '</p></article>'
+    )
+
+
+def _render_technical_details(row, index):
+    evidence = {
+        key: value for key, value in row.evidence.items()
+        if key not in {
+            "agentSlug", "apiContract", "assertionScope",
+            "manualVerificationSteps", "ifMissingOrIncorrect",
+        }
+    }
+    scope = evidence.get("verificationScope")
+    if isinstance(scope, dict) and scope.get("targetVerified") is True:
+        evidence.pop("verificationScope")
+    for key, displayed in (("verificationReason", row.result), ("expectedSetting", row.description)):
+        if evidence.get(key) == displayed:
+            evidence.pop(key)
+    return (
+        f'<details class="technical-entry" id="technical-{index}" '
+        f'data-check-id="{escape(row.checkpoint_id, quote=True)}">'
+        f'<summary><code class="check-id">{escape(row.checkpoint_id)}</code> '
+        f'<strong>{escape(_TITLES.get(row.checkpoint_id, row.description))}</strong> '
+        f'<span class="pill {_PILLS.get(row.status, "na")}">{escape(row.status.replace("NotConfigured", "Not configured"))}</span></summary>'
+        + (f'<pre>{escape(_mask_sensitive(json.dumps(evidence, indent=2)))}</pre>' if evidence else
+           '<p>No additional technical observations are recorded beyond the finding and guidance above.</p>')
+        + f'<p><a href="#finding-{index}">View finding and guidance for {escape(row.checkpoint_id)}</a></p>'
+        '</details>'
     )
 
 
@@ -281,6 +306,16 @@ def render_maker_report(result: RunResult) -> str:
         + "".join(findings.get("Manual verification", []))
         + ('<p>No manual verification items were identified for this run.</p>' if not categories.get("Manual verification") else "")
         + '</section>'
+        '<section class="checks-card" id="technical-details"><h2>Technical details</h2>'
+        '<p>For troubleshooting with your administrator or support: inspect observed values, '
+        'missing resources and read errors by FlightCheck ID. These details do not prove that employee tasks work.</p>'
+        '<p>Repeated instructions and common scope metadata are omitted here. Manual means a person still needs '
+        'to verify the setting, not a confirmed defect or a pass. The original JSON download retains all recorded details.</p>'
+        '<div class="technical-search-controls" hidden><label for="technical-search">Search technical details by FlightCheck ID</label>'
+        '<input id="technical-search" type="search" placeholder="e.g. WD-CONN-001" autocomplete="off">'
+        '<p id="technical-match-count" class="advisory" role="status"></p></div>'
+        + "".join(_render_technical_details(row, index) for index, row in enumerate(result.results))
+        + '<p id="no-technical-match" hidden>No matching FlightCheck IDs.</p></section>'
         '<footer><a href="results.json">Download original check results</a></footer>'
         f'</main><script>{_SCRIPT}</script></body></html>'
     )
@@ -306,9 +341,14 @@ _CSS = """
 .check-id{font-size:12px;font-weight:400;color:var(--muted)}.finding-label strong{font-size:14px}
 .finding-purpose{color:var(--muted)}
 .finding-body{display:block}.finding-body p{font-size:13px;margin:10px 0 0}
-.support-details{border-top:1px solid var(--line);padding-top:10px;margin-top:12px;font-size:12px}
+.finding-links{font-size:12px;margin:12px 0 0}
+.technical-entry{border-top:1px solid var(--line);padding:12px 0;font-size:13px}
+.technical-entry summary{cursor:pointer;overflow-wrap:anywhere}.technical-entry summary .pill{margin-left:8px}
+.technical-entry pre{white-space:pre-wrap;overflow-wrap:anywhere}
+.technical-search-controls{margin:16px 0}.technical-search-controls label{display:block;font-size:13px}
+.technical-search-controls input{display:block;box-sizing:border-box;width:100%;max-width:360px;padding:8px;margin-top:6px}
 .finding-summary{font-size:13px;font-weight:400;margin:6px 0 0}
-.finding summary{cursor:pointer}.finding p{overflow-wrap:anywhere}.finding pre{white-space:pre-wrap;overflow-wrap:anywhere}
+.finding p{overflow-wrap:anywhere}
 .finding-heading .pill{flex-shrink:0}.finding-purpose,.finding-label{overflow-wrap:anywhere}
 .maker-filters{display:flex;gap:8px;flex-wrap:wrap;padding:12px 0}
 .maker-filters button[aria-pressed=true]{font-weight:600;color:var(--accent);border-bottom-color:var(--accent)}
@@ -322,8 +362,11 @@ _CSS = """
 _SCRIPT = """
 const filters = Array.from(document.querySelectorAll('[data-filter]'));
 const findings = Array.from(document.querySelectorAll('.finding'));
+const technicalEntries = Array.from(document.querySelectorAll('.technical-entry'));
+const technicalSearch = document.getElementById('technical-search');
 let kind = 'all';
 document.querySelector('.maker-filters').hidden = false;
+document.querySelector('.technical-search-controls').hidden = false;
 function applyFilter() {
   const search = document.getElementById('search').value.trim().toLowerCase();
   findings.forEach(row => row.hidden = !(kind === 'all' || row.dataset.filterGroup === kind) ||
@@ -339,10 +382,27 @@ filters.forEach(button => button.addEventListener('click', () => {
   kind = button.dataset.filter; applyFilter();
 }));
 document.getElementById('search').addEventListener('input', applyFilter);
+function applyTechnicalFilter() {
+  const search = technicalSearch.value.trim().toLowerCase();
+  technicalEntries.forEach(entry => {
+    entry.hidden = !entry.dataset.checkId.toLowerCase().includes(search);
+    entry.open = Boolean(search) && !entry.hidden;
+  });
+  const visible = technicalEntries.filter(entry => !entry.hidden).length;
+  document.getElementById('no-technical-match').hidden = visible > 0;
+  document.getElementById('technical-match-count').textContent =
+    `${visible} of ${technicalEntries.length} check(s)`;
+}
+technicalSearch.addEventListener('input', applyTechnicalFilter);
+applyTechnicalFilter();
 function openTarget(hash) {
   const target = document.getElementById(hash.slice(1));
   if (!target) return;
-  kind = 'all'; document.getElementById('search').value = ''; applyFilter();
+  if (target.closest('#technical-details')) {
+    technicalSearch.value = ''; applyTechnicalFilter();
+  } else {
+    kind = 'all'; document.getElementById('search').value = ''; applyFilter();
+  }
   let current = target;
   while (current) {
     if (current.tagName === 'DETAILS') current.open = true;
