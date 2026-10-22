@@ -34,6 +34,9 @@ table. Put technical observations in a bottom appendix with independent
 FlightCheck-ID search and bidirectional finding links. Do not repeat visible
 Manual instructions or common scope metadata there; keep the full original JSON
 unchanged and retain distinct observations, read limitations and errors.
+Passed findings show purpose and result without repair ownership or next steps;
+put the general rerun-after-configuration-changes reminder once in the reading
+guide. Preserve actionable guidance for incomplete or non-passing findings.
 
 `da_inventory.csv` attaches typed `DAValidation` metadata to the existing
 `REGISTRY`. It records executable definitions and explicit replaced, legacy,

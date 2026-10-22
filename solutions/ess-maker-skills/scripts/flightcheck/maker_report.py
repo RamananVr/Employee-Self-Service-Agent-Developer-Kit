@@ -119,8 +119,6 @@ def _category(row):
 
 
 def _next_step(row):
-    if row.status == "Passed":
-        return "No corrective action is indicated by this check. Rerun it after changing the relevant configuration."
     if _kind(row) == "optional":
         return "No action is required unless you intend to enable this integration or use this optional configuration."
     if row.remediation:
@@ -139,14 +137,20 @@ def _render_finding(row, index):
     filter_group = {"admin": "manual", "unverified": "warnings", "next": "warnings"}.get(kind, kind)
     manual = _category(row) == "Manual verification"
     purpose = _PURPOSES.get(row.checkpoint_id, row.description)
-    owner = _roles(row)
-    steps = row.evidence.get("manualVerificationSteps")
-    next_step = (
-        "\n".join(f"{number}. {step}" for number, step in enumerate(steps, 1))
-        if row.status == "Manual" and isinstance(steps, list) and steps and all(isinstance(step, str) for step in steps)
-        else _next_step(row)
-    )
-    missing = row.evidence.get("ifMissingOrIncorrect")
+    attention_html = ""
+    if kind != "passed":
+        steps = row.evidence.get("manualVerificationSteps")
+        next_step = (
+            "\n".join(f"{number}. {step}" for number, step in enumerate(steps, 1))
+            if row.status == "Manual" and isinstance(steps, list) and steps and all(isinstance(step, str) for step in steps)
+            else _next_step(row)
+        )
+        missing = row.evidence.get("ifMissingOrIncorrect")
+        attention_html = (
+            f'<p><b>Who should check or fix this:</b> {escape(_roles(row))}</p>'
+            f'<p><b>{"Verification steps" if manual else "Next step"}:</b> {_prose(next_step)}</p>'
+            + (f'<p><b>If missing or incorrect:</b> {_prose(missing)}</p>' if isinstance(missing, str) and missing else "")
+        )
     return (
         f'<article class="finding" id="finding-{index}" data-kind="{kind}" '
         f'data-filter-group="{filter_group}" '
@@ -158,9 +162,7 @@ def _render_finding(row, index):
         '<div class="finding-body">'
         f'<p class="finding-purpose"><b>What this checks:</b> {_prose(purpose)}</p>'
         f'<p><b>Result:</b> {_prose(row.result)}</p>'
-        f'<p><b>Who should check or fix this:</b> {escape(owner)}</p>'
-        f'<p><b>{"Verification steps" if manual else "Next step"}:</b> {_prose(next_step)}</p>'
-        + (f'<p><b>If missing or incorrect:</b> {_prose(missing)}</p>' if isinstance(missing, str) and missing else "")
+        + attention_html
         + '</div>'
         f'<p class="finding-links"><a href="#technical-{index}">Technical details</a>'
         + (f' | <a href="{escape(row.doc_link, quote=True)}" target="_blank" rel="noopener noreferrer">Setup documentation</a>'
@@ -272,7 +274,8 @@ def render_maker_report(result: RunResult) -> str:
         '<li><b>Warnings:</b> recommendations and checks that could not be verified. Read the recorded status and follow the next step.</li>'
         '<li><b>Manual:</b> the person listed must inspect the setting. Follow the steps in Manual verification.</li>'
         '<li><b>Optional integrations:</b> disabled or unconfigured items appear under All and do not require action.</li>'
-        '<li><b>Check details:</b> each check shows its result, responsible person and next steps without expanding it.</li></ul>'
+        '<li><b>Check details:</b> results are visible without expanding a check. Findings needing attention also show the responsible person and next steps.</li>'
+        '<li><b>After changes:</b> rerun relevant checks after configuration changes.</li></ul>'
         + ('<p>This run checked local files only; it did not inspect deployed settings.</p>' if result.scope == "local" else "")
         + '</section>'
     )

@@ -790,8 +790,11 @@ def test_customer_report_unifies_categories_and_exposes_purpose_status_and_steps
         assert f">{row.status}</span>" in finding
         assert "<b>What this checks:</b> " in finding
         assert "<b>Result:</b> " in finding
-        assert "<b>Who should check or fix this:</b> " in finding
-        assert f'<b>{"Verification steps" if row.status == "Manual" else "Next step"}:</b> ' in finding
+        if row.status == "Passed":
+            assert "Who should check or fix this:" not in finding and "Next step:" not in finding
+        else:
+            assert "<b>Who should check or fix this:</b> " in finding
+            assert f'<b>{"Verification steps" if row.status == "Manual" else "Next step"}:</b> ' in finding
         assert '<details' not in finding and '<pre>' not in finding
         assert 'href="#technical-' in finding
     assert '<details class="finding"' not in html
@@ -804,7 +807,8 @@ def test_customer_report_unifies_categories_and_exposes_purpose_status_and_steps
     assert "Who should check or fix this" in manual_section
     assert html.count('data-recorded-status="Manual"') == 1
     assert "bind the runtime reference" in html
-    assert "No corrective action is indicated" in html
+    assert "No corrective action is indicated" not in html
+    assert html.count("rerun relevant checks after configuration changes.") == 1
     assert "repeat(2,minmax(0,1fr))" in html
     assert "<form" not in html and 'type="checkbox"' not in html
     assert result.results[1].category == "Workday DA"
@@ -904,14 +908,27 @@ def test_customer_header_hides_internal_metadata_without_changing_legacy_header(
     ("Blocked", {}, "warnings"), ("Skipped", {}, "warnings"),
     ("Blocked", {"reviewOwner": "administrator"}, "manual"),
     ("Manual", {}, "manual"), ("NotConfigured", {"applicability": "disabled"}, "optional"),
+    ("Passed", {"dependencyCoverageComplete": False}, "warnings"),
 ])
 def test_simple_tabs_preserve_recorded_status_and_optional_dispositions(status, evidence, group):
     from flightcheck.maker_report import _render_finding
 
-    row = CheckResult("CHECK-001", "Agent", "High", status, "Check purpose", "Recorded finding.",
-                      roles=["ESS Maker / Agent Developer"], evidence=evidence)
+    row = CheckResult(
+        "CHECK-001", "Agent", "High", status, "Check purpose", "Recorded finding.",
+        remediation="Inspect the intended configuration.", roles=["ESS Maker / Agent Developer"],
+        evidence={**evidence, "ifMissingOrIncorrect": "Repair only confirmed defects."},
+    )
+    original = deepcopy(row)
     html = _render_finding(row, 0)
     assert f'data-filter-group="{group}"' in html
     assert f'data-recorded-status="{status}"' in html
     assert row.status == status
-    assert "Environment Maker user" in html
+    if group == "passed":
+        assert "Who should check or fix this:" not in html
+        assert "Next step:" not in html and "If missing or incorrect:" not in html
+        assert row.remediation not in html and "Environment Maker user" not in html
+    else:
+        assert "Who should check or fix this:" in html and "Environment Maker user" in html
+        assert ("Verification steps:" if group == "manual" else "Next step:") in html
+        assert "Repair only confirmed defects." in html
+    assert row == original
