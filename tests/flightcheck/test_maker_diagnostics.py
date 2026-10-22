@@ -701,11 +701,11 @@ def test_report_keeps_approved_shell_full_private_metadata_and_zero_totals(tmp_p
         'class="report"', 'class="brand-title"', 'class="meta"', 'class="hr"',
         'class="reading-guide"', 'class="actions-panel"', 'class="syn-no">Stage 1',
         "Completed in:", ENV_ID, "maker@example.test", "An &lt;escaped&gt; agent",
-        'data-label="Needs administrator review">0', 'data-label="Failed">0',
-        'data-label="Optional / not enabled">1',
     ):
         assert expected in html
-    assert "<table" in html
+    assert re.findall(r'<span class="stat [^"]+">.*?<b>(\d+)</b>', html) == ["0", "0", "0", "0", "0", "0", "1"]
+    assert "Status totals table" not in html
+    assert "<table" not in html
     assert 'class="action-table"' not in html
 
 
@@ -783,15 +783,21 @@ def test_customer_report_unifies_categories_and_exposes_purpose_status_and_steps
     assert 'class="reading-guide"' in header and "<ul><li>" in header
     assert "FlightChecks: <b>5 total (4 automated, 1 manual)</b>" in header
     assert 'class="howto"' not in html
-    summaries = re.findall(r'<details class="finding"[^>]*><summary>(.*?)</summary>', html, re.S)
-    assert len(summaries) == len(rows)
+    findings = re.findall(r'<article class="finding"[^>]*>(.*?)</article>', html, re.S)
+    assert len(findings) == len(rows)
     for row in rows:
-        summary = next(item for item in summaries if f">{row.checkpoint_id}</code>" in item)
-        assert f">{row.status}</span>" in summary
-        assert "What this checks:" in summary
+        finding = next(item for item in findings if f">{row.checkpoint_id}</code>" in item)
+        assert f">{row.status}</span>" in finding
+        assert "<b>What this checks:</b> " in finding
+        assert "<b>Result:</b> " in finding
+        assert "<b>Who should check or fix this:</b> " in finding
+        assert f'<b>{"Verification steps" if row.status == "Manual" else "Next step"}:</b> ' in finding
+    assert '<details class="finding"' not in html
+    assert "Expand details" not in html and "Collapse details" not in html
+    assert 'id="expand-all"' not in html and 'id="collapse-all"' not in html
     manual_section = html.split('id="manual-verification"')[1]
     assert "WD-DA-ATTACH-001" in manual_section
-    assert "Verification steps" in manual_section and "<ol><li>" in manual_section
+    assert "<b>Verification steps:</b> 1." in manual_section and "<br>2." in manual_section
     assert "If missing or incorrect" in manual_section
     assert "Who should check or fix this" in manual_section
     assert html.count('data-recorded-status="Manual"') == 1
@@ -805,7 +811,7 @@ def test_customer_report_unifies_categories_and_exposes_purpose_status_and_steps
     ]
     assert "Treat this local report as private" not in html
     assert "The header contains the account" not in html
-    assert "<p>Environment Maker user</p>" in manual_section
+    assert "<b>Who should check or fix this:</b> Environment Maker user</p>" in manual_section
     assert "Ask the Environment Maker user to confirm access." in html
     assert "<p>Agent owner</p>" not in html
     assert 'data-kind="unverified" data-filter-group="warnings"' in html

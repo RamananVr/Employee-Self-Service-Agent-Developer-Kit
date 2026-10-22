@@ -28,6 +28,9 @@ Customer reports consolidate internal module labels (for example, all Workday
 checks use one Workday group). Applicable portal-only checks belong in the
 single Manual verification section with their ID, purpose, owner, detailed
 steps and missing-setting guidance; they do not require an approval form.
+Use always-visible single-column test cases with inline purpose/result/owner/
+next-step labels. Keep the colored status totals without a duplicate totals
+table; only supporting technical evidence needs a disclosure.
 
 `da_inventory.csv` attaches typed `DAValidation` metadata to the existing
 `REGISTRY`. It records executable definitions and explicit replaced, legacy,

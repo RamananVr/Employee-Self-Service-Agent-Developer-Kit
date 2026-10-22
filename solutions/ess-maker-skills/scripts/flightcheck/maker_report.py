@@ -141,32 +141,33 @@ def _render_finding(row, index):
     purpose = _PURPOSES.get(row.checkpoint_id, row.description)
     owner = _roles(row)
     steps = row.evidence.get("manualVerificationSteps")
-    next_html = (
-        "<ol>" + "".join(f"<li>{_prose(step)}</li>" for step in steps) + "</ol>"
+    next_step = (
+        "\n".join(f"{number}. {step}" for number, step in enumerate(steps, 1))
         if row.status == "Manual" and isinstance(steps, list) and steps and all(isinstance(step, str) for step in steps)
-        else f"<p>{_prose(_next_step(row))}</p>"
+        else _next_step(row)
     )
     missing = row.evidence.get("ifMissingOrIncorrect")
     return (
-        f'<details class="finding" id="finding-{index}" data-kind="{kind}" '
+        f'<article class="finding" id="finding-{index}" data-kind="{kind}" '
         f'data-filter-group="{filter_group}" '
-        f'data-recorded-status="{escape(row.status)}"{" open" if manual else ""}>'
-        '<summary><span class="finding-label">'
+        f'data-recorded-status="{escape(row.status)}" aria-labelledby="finding-{index}-title">'
+        f'<div class="finding-heading"><h3 class="finding-label" id="finding-{index}-title">'
         f'<code class="check-id">{escape(row.checkpoint_id)}</code>'
-        f'<strong>{escape(_TITLES.get(row.checkpoint_id, row.description))}</strong></span>'
-        f'<span class="pill {_PILLS.get(row.status, "na")}">{escape(row.status.replace("NotConfigured", "Not configured"))}</span>'
-        f'<span class="finding-purpose"><b>What this checks:</b> {_prose(purpose)}</span></summary>'
-        '<div class="finding-body"><div><h3>Result</h3>'
-        f'<p>{_prose(row.result)}</p><h3>Who should check or fix this</h3><p>{escape(owner)}</p></div>'
-        f'<div><h3>{"Verification steps" if manual else "Next step"}</h3>{next_html}'
-        + (f'<h3>If missing or incorrect</h3><p>{_prose(missing)}</p>' if isinstance(missing, str) and missing else "")
-        + '</div></div>'
+        f'<strong>{escape(_TITLES.get(row.checkpoint_id, row.description))}</strong></h3>'
+        f'<span class="pill {_PILLS.get(row.status, "na")}">{escape(row.status.replace("NotConfigured", "Not configured"))}</span></div>'
+        '<div class="finding-body">'
+        f'<p class="finding-purpose"><b>What this checks:</b> {_prose(purpose)}</p>'
+        f'<p><b>Result:</b> {_prose(row.result)}</p>'
+        f'<p><b>Who should check or fix this:</b> {escape(owner)}</p>'
+        f'<p><b>{"Verification steps" if manual else "Next step"}:</b> {_prose(next_step)}</p>'
+        + (f'<p><b>If missing or incorrect:</b> {_prose(missing)}</p>' if isinstance(missing, str) and missing else "")
+        + '</div>'
         '<details class="support-details"><summary>Technical details</summary>'
         f'<p>Recorded status: {escape(row.status)}.</p>'
         + (f'<pre>{escape(_mask_sensitive(json.dumps(row.evidence, indent=2)))}</pre>' if row.evidence else "")
         + (f'<p><a href="{escape(row.doc_link, quote=True)}" target="_blank" rel="noopener noreferrer">Documentation</a></p>'
            if row.doc_link.startswith(("https://", "http://")) else "")
-        + '</details></details>'
+        + '</details></article>'
     )
 
 
@@ -189,16 +190,6 @@ def render_maker_report(result: RunResult) -> str:
         f'<b>{counts[kind]}</b> {label}</span>'
         for kind, label, style, dot in _SUMMARY
     ) + '</div>'
-    stats = (
-        '<table class="status-summary"><caption>Recorded results</caption><thead><tr>'
-        + "".join(
-            f'<th scope="col">{label}</th>'
-            for kind, label, _style, _dot in _SUMMARY
-        )
-        + '<th scope="col">Total</th></tr></thead><tbody><tr>'
-        + "".join(f'<td data-label="{escape(label)}">{counts[kind]}</td>' for kind, label, _style, _dot in _SUMMARY)
-        + f'<td data-label="Total">{len(result.results)}</td></tr></tbody></table>'
-    )
     categories = {}
     actions, findings = [], {}
     for index, row in enumerate(result.results):
@@ -256,7 +247,7 @@ def render_maker_report(result: RunResult) -> str:
         '<li><b>Warnings:</b> recommendations and checks that could not be verified. Read the recorded status and follow the next step.</li>'
         '<li><b>Manual:</b> the person listed must inspect the setting. Follow the steps in Manual verification.</li>'
         '<li><b>Optional integrations:</b> disabled or unconfigured items appear under All and do not require action.</li>'
-        '<li><b>Check details:</b> expand a check for its result, responsible person and next steps.</li></ul>'
+        '<li><b>Check details:</b> each check shows its result, responsible person and next steps without expanding it.</li></ul>'
         + ('<p>This run checked local files only; it did not inspect deployed settings.</p>' if result.scope == "local" else "")
         + '</section>'
     )
@@ -280,12 +271,10 @@ def render_maker_report(result: RunResult) -> str:
            'See Manual verification for the responsible person and detailed steps.</p>' if categories.get("Manual verification") else "")
         + '</section><section class="synopsis"><div class="syn-head"><h2>Readiness at a glance</h2>'
         '<span class="hint">Select any category to inspect its recorded findings.</span></div>'
-        f'{ledger}<details class="count-details"><summary>Status totals table</summary>{stats}</details>'
+        f'{ledger}'
         f'<div class="syn-grid">{"".join(tiles)}</div></section>'
         '<section class="checks-card"><h2>Check details</h2><div class="filters maker-filters" hidden>'
-        f'{filters}<label>Search <input id="search" type="search"></label>'
-        '<button type="button" id="expand-all">Expand all</button>'
-        '<button type="button" id="collapse-all">Collapse all</button></div>'
+        f'{filters}<label>Search <input id="search" type="search"></label></div>'
         f'{"".join(sections)}<p id="no-match" hidden>No matching checks.</p></section>'
         '<section class="checks-card category manual-verification" id="manual-verification"><h2>Manual verification</h2>'
         '<p>These settings need to be checked by the person listed below.</p>'
@@ -304,43 +293,28 @@ _CSS = """
 .reading-guide{border-top:1px solid var(--line);margin-top:16px;padding-top:12px;font-size:13px}
 .reading-guide h2{font-size:16px;line-height:22px;margin:0 0 8px}
 .reading-guide ul{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 28px;margin:0;padding-left:18px}
-.reading-guide p{margin:8px 0 0}.count-details{margin-bottom:16px;font-size:13px}.count-details>summary{cursor:pointer}
-.status-summary{width:100%;border-collapse:collapse;table-layout:fixed;margin-bottom:20px}
-.status-summary caption{text-align:left;font-size:13px;color:var(--muted);margin-bottom:8px}
-.status-summary th,.status-summary td{text-align:left;padding:8px;border-bottom:1px solid var(--line);font-size:13px;overflow-wrap:anywhere}
-.status-summary th{font-weight:400;color:var(--muted)}.status-summary td{font-size:20px;font-weight:600}
-.status-summary td[data-label="Passed"]{color:var(--pass)}.status-summary td[data-label="Failed"]{color:var(--fail)}
-.status-summary td[data-label="Needs administrator review"],.status-summary td[data-label="Could not verify"],.status-summary td[data-label="Notes to review"]{color:var(--pill-warn)}
-.status-summary td[data-label="Optional / not enabled"]{color:var(--na)}
+.reading-guide p{margin:8px 0 0}
 .action-table{width:100%;border-collapse:collapse;table-layout:fixed}
 .action-table th,.action-table td{padding:12px;vertical-align:top;border-bottom:1px solid var(--line);text-align:left;overflow-wrap:anywhere}
 .action-table th:first-child{width:28%}.action-table th:last-child{width:23%}
 .advisory{display:block;font-size:12px;color:var(--muted)}
-.sec-body{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;align-items:start}
+.sec-body{display:block}
 .finding{min-width:0;padding:12px;border:1px solid var(--line);border-radius:4px}
-.finding>summary{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:start;gap:6px 10px;list-style:none}
-.finding>summary::-webkit-details-marker{display:none}
-.finding-label{display:flex;flex-wrap:wrap;gap:3px 8px;min-width:0}
-.check-id{font-size:12px;color:var(--muted)}.finding-label strong{font-size:14px}
-.finding-purpose{grid-column:1 / -1;font-size:13px;color:var(--muted)}
-.finding>summary::after{content:"Expand details";grid-column:1 / -1;color:var(--accent);font-size:12px}
-.finding[open]>summary::after{content:"Collapse details"}
-.finding-body h3{font-size:13px;margin:14px 0 4px}.finding-body p{font-size:13px;margin:4px 0}
-.finding-body ol{font-size:13px;padding-left:20px}.finding-body li+li{margin-top:8px}
+.finding+.finding{margin-top:12px}
+.finding-heading{display:flex;align-items:start;gap:6px 10px}
+.finding-label{display:flex;flex:1;flex-wrap:wrap;gap:3px 8px;min-width:0;margin:0}
+.check-id{font-size:12px;font-weight:400;color:var(--muted)}.finding-label strong{font-size:14px}
+.finding-purpose{color:var(--muted)}
+.finding-body{display:block}.finding-body p{font-size:13px;margin:10px 0 0}
 .support-details{border-top:1px solid var(--line);padding-top:10px;margin-top:12px;font-size:12px}
-.manual-verification .finding+.finding{margin-top:12px}
-.manual-verification .finding-body{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px}
 .finding-summary{font-size:13px;font-weight:400;margin:6px 0 0}
 .finding summary{cursor:pointer}.finding p{overflow-wrap:anywhere}.finding pre{white-space:pre-wrap;overflow-wrap:anywhere}
-.finding .pill{grid-column:2;grid-row:1}.finding-purpose,.finding-label{overflow-wrap:anywhere}
+.finding-heading .pill{flex-shrink:0}.finding-purpose,.finding-label{overflow-wrap:anywhere}
 .maker-filters{display:flex;gap:8px;flex-wrap:wrap;padding:12px 0}
 .maker-filters button[aria-pressed=true]{font-weight:600;color:var(--accent);border-bottom-color:var(--accent)}
 .maker-filters input{max-width:100%}[hidden]{display:none!important}
 @media(max-width:600px){.action-table,.action-table tbody,.action-table tr,.action-table td,.action-table tbody th{display:block;width:100%}
-.report .meta,.reading-guide ul,.sec-body,.manual-verification .finding-body{grid-template-columns:minmax(0,1fr)}
-.status-summary,.status-summary tbody{display:block}.status-summary thead{display:none}
-.status-summary tr{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}
-.status-summary td{display:block}.status-summary td::before{content:attr(data-label);display:block;font-size:12px;font-weight:400;color:var(--muted)}
+.report .meta,.reading-guide ul{grid-template-columns:minmax(0,1fr)}
 .action-table thead{display:none}.action-table td[data-label]::before{content:attr(data-label);display:block;font-weight:600}
 .action-table th:first-child,.action-table th:last-child{width:100%}.checks-card{padding:12px}}
 """
@@ -365,12 +339,6 @@ filters.forEach(button => button.addEventListener('click', () => {
   kind = button.dataset.filter; applyFilter();
 }));
 document.getElementById('search').addEventListener('input', applyFilter);
-document.getElementById('expand-all').addEventListener('click', () => {
-  document.querySelectorAll('.category,.finding').forEach(row => { if (!row.hidden) row.open = true; });
-});
-document.getElementById('collapse-all').addEventListener('click', () => {
-  document.querySelectorAll('.category,.finding').forEach(row => row.open = false);
-});
 function openTarget(hash) {
   const target = document.getElementById(hash.slice(1));
   if (!target) return;
@@ -379,9 +347,6 @@ function openTarget(hash) {
   while (current) {
     if (current.tagName === 'DETAILS') current.open = true;
     current = current.parentElement;
-  }
-  if (target.classList.contains('manual-verification')) {
-    target.querySelectorAll('.finding').forEach(row => row.open = true);
   }
   target.scrollIntoView({block:'start'});
 }
