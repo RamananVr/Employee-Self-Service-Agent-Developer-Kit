@@ -86,6 +86,7 @@ def manual_result(runner, spec, reason, *, evidence=None):
 
 def decorate(runner, spec, row):
     definition = spec.da
+    row.custom_tags = list(dict.fromkeys((*spec.custom_tags, *row.custom_tags)))
     if definition.documentation:
         row.doc_link = definition.documentation
     row.evidence = {

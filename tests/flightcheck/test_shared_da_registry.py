@@ -53,6 +53,32 @@ def _row(payload, key):
     return next(row for row in payload["results"] if row["checkpoint_id"] == key)
 
 
+@pytest.mark.parametrize("status", ["Passed", "Manual", "Blocked", "Error", "NotConfigured"])
+def test_custom_tags_merge_registered_and_producer_labels_without_mutation(status):
+    from flightcheck.da_execution import decorate
+
+    source = CheckResult(
+        "CUSTOM-001", "Test", "High", status, "Custom check", "Recorded result.",
+        custom_tags=["Shared label", "Producer alias"],
+    )
+    original = deepcopy(source)
+    spec = registry.CheckpointSpec(
+        key="CUSTOM-001", category_label="Test", category_fn=lambda _: [source],
+        custom_tags=("Registered alias", "Shared label"),
+        da=DAValidation(
+            purpose="Custom check", prerequisites=(),
+            manual_steps=("Inspect the selected setting.",), if_incorrect="Repair confirmed defects.",
+        ),
+    )
+    runner = SimpleNamespace(agent_slug="hr", env_id="test-environment")
+    executor = DAExecutor(runner, SimpleNamespace(), (spec.key,), (spec,), {})
+    row = executor.run(runner)[0]
+    assert row.custom_tags == ["Registered alias", "Shared label", "Producer alias"]
+    assert decorate(runner, spec, row).custom_tags == ["Registered alias", "Shared label", "Producer alias"]
+    assert row.status == status
+    assert source == original
+
+
 @pytest.mark.parametrize("identity", ["matching", "other_account", "missing_account", "other_tenant", "auth_error"])
 def test_graph_uses_its_own_authentication_and_rejects_identity_changes(monkeypatch, identity):
     from flightcheck.graph_client import GraphClient
@@ -836,6 +862,7 @@ def test_passive_history_checks_only_exact_provider_flows_and_validated_recent_s
         assert len(http.calls) == 1
         assert flow_id in http.calls[0].request.url
     assert row.status == expected
+    assert row.custom_tags == (["Workday Litmus Test"] if provider == "workday" else [])
     if expected in {"Passed", "Failed"}:
         assert "scoreable recent exact-flow" in row.result
         assert "not a current intended-employee smoke test" in row.result

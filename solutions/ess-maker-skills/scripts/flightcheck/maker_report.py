@@ -8,7 +8,7 @@ from html import escape
 import json
 import re
 
-from .runner import RunResult, _REPORT_CSS, _mask_sensitive, _render_header, _slug
+from .runner import RunResult, _REPORT_CSS, _mask_sensitive, _render_custom_tags, _render_header, _slug
 
 
 _LABELS = {
@@ -159,7 +159,8 @@ def _render_finding(row, index):
         f'<code class="check-id">{escape(row.checkpoint_id)}</code>'
         f'<strong>{escape(_TITLES.get(row.checkpoint_id, row.description))}</strong></h3>'
         f'<span class="pill {_PILLS.get(row.status, "na")}">{escape(row.status.replace("NotConfigured", "Not configured"))}</span></div>'
-        '<div class="finding-body">'
+        + _render_custom_tags(row.custom_tags)
+        + '<div class="finding-body">'
         f'<p class="finding-purpose"><b>What this checks:</b> {_prose(purpose)}</p>'
         f'<p><b>Result:</b> {_prose(row.result)}</p>'
         + attention_html

@@ -58,7 +58,7 @@ from flightcheck.checks.native_agent import run_native_agent_checks
 from flightcheck.checks.publishing import run_publishing_checks
 from flightcheck.checks.external_systems import run_external_systems_checks
 from flightcheck.checks.solution import run_solution_checks
-from flightcheck.checks.workday import run_workday_checks
+from flightcheck.checks.workday import WORKDAY_LITMUS_TAG, run_workday_checks
 from flightcheck.checks.workday_da import run_workday_da_checks
 from flightcheck.checks.workday_tenant import run_workday_tenant_checks
 from flightcheck.checks.workday_extension import run_workday_extension_checks
@@ -152,6 +152,7 @@ class CheckpointSpec:
     listable: bool = True
     da: DAValidation | None = None
     legacy_family: str = ""
+    custom_tags: tuple[str, ...] = ()
 
 
 @dataclass
@@ -452,6 +453,7 @@ _SPECS: list[CheckpointSpec] = [
         prereqs=("WD-001",),
         priority=Priority.HIGH.value,
         roles=(Role.WORKDAY_ADMIN.value, Role.ESS_MAKER.value),
+        custom_tags=(WORKDAY_LITMUS_TAG,),
     ),
     # ---- Workday: connection-reference binding completeness ----
     # Reads cached refs from WD-PKG-001 and needs _workday_flows (WD-001).

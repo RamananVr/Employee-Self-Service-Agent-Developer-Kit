@@ -203,6 +203,8 @@ The bottom **Technical details** appendix has its own case-insensitive FlightChe
 
 The check tabs are **All, Passed, Failed, Warnings, Manual**, in that order. Warnings includes recommendations and unverified automatic inspections; Manual includes explicit manual and administrator-verification items. Actual recorded statuses and detailed ledger counts remain unchanged. Optional/not-enabled items remain under All, not Passed or Failed. Customer-facing role labels use **Environment Maker user**, while raw role values remain compatible.
 
+Checks can supply optional custom tags, shown as neutral labels beside the finding and included in the main search. For example, `WD-RUN-001` carries **Workday Litmus Test**. Tags are defined by the check, not mapped to IDs in the report, and do not change its status, scope or verification claims.
+
 Applicable portal-only settings appear together under **Manual verification**. For the enabled Microsoft-provided Workday integration, `WD-DA-ATTACH-001` names both agent connection references (**ESS Workday Runtime** and **ESS Workday Runtime REST Execution**) and guides inspection of their bindings and **Allow permission to share parameters** settings. Flow authorization is checked separately. This is an unverified manual item, not an automatic pass, configuration failure, completion form or release gate.
 
 Native ServiceNow HRSD/ITSM checks distinguish employee-delegated action

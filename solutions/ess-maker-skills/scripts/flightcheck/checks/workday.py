@@ -53,6 +53,7 @@ from .connections import check_connector_connections, filter_connections_by_conn
 from ..agent_scope import is_declarative_agent
 
 DOC_BASE = "https://learn.microsoft.com/en-us/copilot/microsoft-365/employee-self-service"
+WORKDAY_LITMUS_TAG = "Workday Litmus Test"
 
 # The 3 critical Dataverse environment variables for Workday
 ENV_VARS = {
@@ -3887,7 +3888,10 @@ def _check_workday_run_health(runner, prior_results=None) -> list[CheckResult]:
     remediation point the operator at a failed prerequisite rung instead of
     asking them to run a scenario that cannot pass.
     """
-    return _check_workday_run_health_passive(runner, prior_results)
+    rows = _check_workday_run_health_passive(runner, prior_results)
+    for row in rows:
+        row.custom_tags = [WORKDAY_LITMUS_TAG]
+    return rows
 
 
 def _check_workday_run_health_passive(runner, prior_results=None) -> list[CheckResult]:

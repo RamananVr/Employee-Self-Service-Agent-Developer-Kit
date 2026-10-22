@@ -38,6 +38,12 @@ Passed findings show purpose and result without repair ownership or next steps;
 put the general rerun-after-configuration-changes reminder once in the reading
 guide. Preserve actionable guidance for incomplete or non-passing findings.
 
+Define optional discovery labels through `CheckpointSpec.custom_tags` (a tuple
+of strings) for shared DA checks, or `CheckResult.custom_tags` (a list of strings)
+in a producer. Shared execution merges both without duplicates, including on
+fallback results. The report renders these as neutral, searchable custom tags;
+never add per-ID tag mappings to the UI or use tags as readiness/status signals.
+
 `da_inventory.csv` attaches typed `DAValidation` metadata to the existing
 `REGISTRY`. It records executable definitions and explicit replaced, legacy,
 excluded, detail, guard and deferred dispositions, preserving historical purpose/source

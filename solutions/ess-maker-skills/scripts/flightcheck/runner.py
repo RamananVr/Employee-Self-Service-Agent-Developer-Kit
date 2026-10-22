@@ -116,6 +116,7 @@ class CheckResult:
     # token. Only meaningful when status == BLOCKED; empty on every other
     # status. An empty block_reason on a blocked row means pre-change data.
     block_reason: str = ""
+    custom_tags: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if not self.severity:
@@ -586,6 +587,7 @@ def check_result_contract_dict(result: CheckResult) -> dict[str, Any]:
         "remediation": result.remediation,
         "docLink": result.doc_link,
         "docLabel": result.doc_label,
+        "customTags": list(result.custom_tags),
         "roles": list(result.roles),
         "evidence": dict(result.evidence),
     }
@@ -927,6 +929,9 @@ _REPORT_CSS = """
   .pill.na{color:var(--na);background:var(--na-bg);border-color:var(--na-line);white-space:normal;text-align:center;max-width:100%;line-height:14px}
   .check-title{font-family:'Segoe UI',system-ui,sans-serif;font-size:16px;line-height:22px;font-weight:600;flex:1 1 auto;min-width:0}
   .check-title .id{font-weight:600;color:var(--muted);font-size:12.5px;font-family:ui-monospace,monospace;margin-inline-start:6px}
+  .custom-tags{display:flex;flex-wrap:wrap;gap:6px;list-style:none;padding:0;margin:8px 0 0;min-width:0}
+  .custom-tag{font-size:12px;line-height:18px;font-weight:400;color:var(--muted);border:1px solid var(--line);border-radius:4px;padding:2px 8px;min-width:0;overflow-wrap:anywhere}
+  .ch-main>.custom-tags{flex-basis:100%}
   .role{flex:0 0 100%;font-family:'Segoe UI',system-ui,sans-serif;font-size:14px;line-height:20px;color:var(--ink);font-weight:600;margin-top:4px;white-space:nowrap}
   .role::before{content:"Assigned to: "}
   .role.none{display:none}
@@ -1788,6 +1793,16 @@ def _render_sections(
     return "".join(parts)
 
 
+def _render_custom_tags(tags: list[str]) -> str:
+    if not tags:
+        return ""
+    return (
+        '<ul class="custom-tags" aria-label="Custom tags">'
+        + "".join(f'<li class="custom-tag">{_html_escape(tag)}</li>' for tag in tags)
+        + '</ul>'
+    )
+
+
 def _render_check_card(res: CheckResult) -> str:
     """One check rendered as a Fluent 2 row with preserved data hooks."""
     pill_class, label, data_s = _STATUS_STYLE.get(
@@ -1824,6 +1839,7 @@ def _render_check_card(res: CheckResult) -> str:
         f'{priority_html}{blocked_html}</div>'
         '<div class="ch-main">'
         f'<span class="check-title">{_html_escape(res.description)}{id_html}</span>'
+        f'{_render_custom_tags(res.custom_tags)}'
         f'<span class="role{role_cls}">{role_txt}</span>'
         '</div></div>\n',
     ]
