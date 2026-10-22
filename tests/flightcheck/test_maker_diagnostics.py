@@ -9,6 +9,7 @@ Local-file, report and orchestration assertions do not simulate external APIs.
 """
 
 from copy import deepcopy
+import base64
 import json
 from pathlib import Path
 import re
@@ -30,6 +31,7 @@ from flightcheck.runner import (
     CheckResult, FlightCheckRunner, _render_header, maker_diagnostic_outcome, save_results,
     versioned_run_result_to_dict,
 )
+from flightcheck.graph_client import GraphClient
 
 
 CASSETTES = Path(__file__).resolve().parents[1] / "fixtures" / "cassettes"
@@ -78,6 +80,14 @@ def setup_workspace(tmp_path, monkeypatch):
     auth = Mock(return_value=("read-token", TENANT_ID, "maker@example.test"))
     monkeypatch.setattr(maker, "authenticate_flightcheck", auth)
     monkeypatch.setattr(maker, "authenticate_flightcheck_dependency", Mock(return_value="read-token"))
+
+    def authenticate_graph(client, preferred_username=None):
+        claims = base64.urlsafe_b64encode(json.dumps({"tid": TENANT_ID}).encode()).decode().rstrip("=")
+        client._token = f"header.{claims}.signature"
+        client.signed_in_username = "maker@example.test"
+        return client._token
+
+    monkeypatch.setattr(GraphClient, "authenticate", authenticate_graph)
     return SimpleNamespace(config=config, native=native, content=content, auth=auth, root=tmp_path)
 
 

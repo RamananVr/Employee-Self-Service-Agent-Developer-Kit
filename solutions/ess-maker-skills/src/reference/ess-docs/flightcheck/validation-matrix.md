@@ -24,11 +24,11 @@ excluding timestamps/duration and actual changes to live data.
 DA `full` inspects exactly the selected agent, regardless of whether Dataverse
 is configured. `scripts/flightcheck/da_inventory.csv` attaches DA metadata to
 the existing `REGISTRY`; it is the runtime coverage/disposition inventory, not
-a second executor or a dependency on private planning documents. Its 164
-identities comprise 81 executable requirements, 32 replacements, 25
+a second executor or a dependency on private planning documents. Its 168
+identities comprise 85 executable definitions, 32 replacements, 25
 legacy implementation definitions, two explicitly excluded assertions,
 11 detail/family selectors, 10 guards and three
-deferred ALM checks. These are definition counts, not 164 executed checks or
+deferred ALM checks. These are definition counts, not 168 executed checks or
 an arbitrary 100-pass target. Historical purposes and source revisions are
 retained separately from current assertions and target scope.
 `legacy` describes the old implementation, not its protocol: current Workday
@@ -55,6 +55,9 @@ The comprehensive selection includes:
 | WD-INTEGRATION-001 / SN-INTEGRATION-001 | Optional integration applicability: enabled, disabled, configured without active use, not configured or uncertain; disabled/unconfigured is not a defect |
 | WD-CONN-001 / SN-CONN-001 | Exact binding results for the enabled integration's selected-agent references, not unrelated environment connections |
 | SN-FLOW-001 | State of ServiceNow flows actually invoked by this agent, if any; native direct actions do not require flows or legacy templates |
+| SN-DA-AUTH-001 | Manual comparison of employee-delegated action sign-in, resource/client identity, short instance name and ServiceNow OIDC employee mapping; Knowledge crawl authentication is separate |
+| SN-DA-TOPIC-001 | Manual inspection of the applicable HRSD or ITSM setup/system topics without guessing native schema/display-name mappings or requiring CEA templates |
+| SN-DA-PORTAL-001 | Manual comparison of Setup Configurations > Set ServiceNow Portal BaseURI with the intended portal root, distinct from connector Instance name |
 | WD-DA-PKG/FLOW/AUTH/TOPIC/WIRING-001 | Existing supported OOB Workday setup inspections when reviewed OOB topics are enabled in full; an explicit setup checkpoint/profile may inspect configuration before activation. Custom connectors alone do not require the OOB package |
 | WD-DA-TOPIC-001 | All seven documented Workday system topics must be present once and active; unused optional employee scenarios need not be enabled. Presence/activation does not prove successful employee execution |
 | WD-DA-TOPIC-001 / WD-DA-WIRING-001 | Native component inspection uses the exact selected-agent snapshot independently of Dataverse access; unrelated package/authorization read limits do not hide observed topic defects |
@@ -68,6 +71,10 @@ The comprehensive selection includes:
 | WD-DA-MAKER-001 | Fresh unpublished Test-pane employee-ID or intended read-only scenario; no automatic email/phone update and no claim of published non-maker success |
 | Selected local checks | Instructions/identity, starter-prompt notes, informational conversation inventory and placeholder-description detection; no sibling scan, description word-count threshold or legacy minimum-topic/User Context variable requirements |
 | Knowledge, connected search, handoff, QA and publishing checks | Supported authored configuration observations plus scoped Manual verification for source mapping, indexing, effective employee access, evaluation, audience and rollout. No approval forms, employee transactions or default ALM probes |
+| CONFIG-013 / EXT-002 / EXT-002-ACL | Authoritative SharePoint site/file scope, exact connected-source mapping, separate ServiceNow Knowledge ingestion authentication and Simple/Advanced user-criteria behavior; indexing is not employee ACL proof |
+| DA-SP-FILTER-001 / DA-HANDOFF-001 | Conditional SharePoint metadata/user-context/KQL filtering and optional Hub connected-agent descriptions/publication/routing/access. Unsupported applicability remains unknown/Manual, not compulsory setup or invented absence |
+| QA-001/002/012 | Scenario-specific test design, actual completed evaluation runs and organizational response-quality criteria; a dataset-quality gate or deployed test set is not a successful agent evaluation |
+| PUB-003/006/011 / DA-RUNTIME-001 | Separate unpublished maker testing, later organization approval/pilot audience and published non-maker use in Microsoft 365 Copilot Chat; no automatic publishing or required approval to inspect Dev |
 
 Every planned definition produces exactly one result, including a scoped
 fallback or explicit not-applicable disposition. The additive JSON `coverage`
@@ -78,6 +85,22 @@ failures are Errors, not successful or routine manual results. A denied
 delegated read or unsupported observation becomes Manual with the check ID,
 purpose, target, responsible role, ordered steps and missing-setting guidance.
 Failed identity/content prerequisites prevent dependent remote reads.
+
+Graph uses its existing Graph-specific public client and delegated read scopes,
+not the AgentBuilder application's `/.default` audience. Both authenticated
+account and token tenant must match the selected native inspection before any
+Graph read. A failed Graph sign-in is retained for dependent observations
+without repeatedly prompting in the same run. Teams-bearing SKU absence is an
+inventory observation, not a universal DA prerequisite or a direction to use
+standalone Teams as the validation surface.
+
+ServiceNow applicability is preserved across full/checkpoint/profile routes:
+inactive/absent actions are not applicable, unknown discovery remains unverified,
+and active actions receive the scoped checks. Knowledge/Hub/filtering guidance
+does not authenticate unrelated connection providers merely to return manual
+steps. A complete native component inventory is not a complete external-source
+or connected-agent mapping, so unsupported applicability is never inferred from
+zero projected components.
 
 The explicit `local` scope remains unauthenticated in both entrypoints and
 proves only local authored state, not deployment freshness. It never substitutes

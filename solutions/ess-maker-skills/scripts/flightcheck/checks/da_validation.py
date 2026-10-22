@@ -70,6 +70,12 @@ def _graph_observation(runner, spec):
         finding = f"{len(matching)} matching tenant SKU(s): {', '.join(matching) or 'none'}. "
         finding += "This is tenant inventory, not intended-user assignment or effective billing capacity."
         evidence = {"skuPartNumbers": matching, "evidenceBoundary": "tenant_inventory_not_audience_entitlement"}
+        if key == "PRE-003":
+            return result_for(
+                spec, "Passed", finding + " A Teams-bearing SKU is not a universal DA prerequisite; "
+                "published DA validation uses Microsoft 365 Copilot Chat, not standalone Teams.",
+                evidence=evidence,
+            )
         return result_for(spec, "Passed", finding, evidence=evidence) if matching else manual_result(
             runner, spec, finding, evidence=evidence,
         )
@@ -651,6 +657,13 @@ def run_registered_da_check(runner):
             f"The saved REST base URL has the documented HTTPS /ccx/api structure: {rest}. "
             "This does not establish deployed endpoint or Workday tenant agreement.",
             evidence={"configuredRestBaseUrl": rest, "evidenceBoundary": "saved_configuration_not_deployed_endpoint"},
+        )]
+    if strategy == "optional_manual":
+        return [manual_result(
+            runner, spec,
+            "The supported selected-agent snapshot does not establish whether this optional configuration is used. "
+            "First inspect applicability; no setup is required if it is not used.",
+            evidence={"applicability": "unknown"},
         )]
     if strategy == "manual":
         return [manual_result(

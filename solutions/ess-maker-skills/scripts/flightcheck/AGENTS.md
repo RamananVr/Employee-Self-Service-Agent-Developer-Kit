@@ -57,6 +57,21 @@ employee scenarios. Connection bindings, flow authorization, parameter sharing
 and employee success are separate assertions. No employee write probe or new
 Workday administrator credential is required.
 
+Native ServiceNow actions and Knowledge ingestion have different authentication
+and applicability contracts. Do not gate Knowledge checks on an enabled action
+connector or require old Dataverse templates/flows for direct HRSD/ITSM actions.
+SharePoint filtering and Hub setup are optional; unsupported applicability is
+unknown, not absent or a mandatory feature. Keep conditional portal inspection
+Manual and distinguish test-case quality, completed evaluations, maker tests
+and published non-maker validation.
+
+Use the existing Graph client for Graph authentication, with its own delegated
+read scopes/public application. Verify its actual account and token tenant
+against native authentication before admitting any Graph read. Do not request
+Graph `/.default` with the AgentBuilder application or retry the same failed
+sign-in for every dependent check. Tenant SKU/role inventory is not a universal
+DA licensing or administrator-role requirement.
+
 FlightCheck validates customer deployments by querying multiple APIs.
 Each API requires its own authentication and has different data
 available:

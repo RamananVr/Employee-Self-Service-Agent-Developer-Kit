@@ -3,6 +3,7 @@
 
 """Shared planning and real CLI regressions using approved API fixtures."""
 
+import base64
 import json
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
@@ -50,6 +51,171 @@ def _run_cli(ws, monkeypatch, http, options, output="report"):
 
 def _row(payload, key):
     return next(row for row in payload["results"] if row["checkpoint_id"] == key)
+
+
+@pytest.mark.parametrize("identity", ["matching", "other_account", "missing_account", "other_tenant", "auth_error"])
+def test_graph_uses_its_own_authentication_and_rejects_identity_changes(monkeypatch, identity):
+    from flightcheck.graph_client import GraphClient
+
+    calls = []
+    token_tenant = TENANT_ID if identity != "other_tenant" else "00000000-0000-4000-8000-000000009999"
+    claims = base64.urlsafe_b64encode(json.dumps({"tid": token_tenant}).encode()).decode().rstrip("=")
+
+    def authenticate(client, preferred_username=None):
+        calls.append((client.tenant_id, preferred_username))
+        if identity == "auth_error":
+            raise RuntimeError("Graph authentication failed (invalid_request).")
+        client.signed_in_username = {
+            "other_account": "other@example.test", "missing_account": None,
+        }.get(identity, "maker@example.test")
+        client._token = f"header.{claims}.signature"
+        return client._token
+
+    monkeypatch.setattr(GraphClient, "authenticate", authenticate)
+    runner = SimpleNamespace(
+        graph=None, tenant_id=TENANT_ID, authenticated_account="maker@example.test",
+        connection_dependency_token=lambda _: pytest.fail("Graph must not use the AgentBuilder public client"),
+    )
+    executor = DAExecutor(runner, SimpleNamespace(), (), (), {})
+    for _ in range(2):
+        if identity == "matching":
+            assert executor.graph() is runner.graph
+            assert runner.graph.strict_reads is True
+        else:
+            with pytest.raises((ValueError, RuntimeError), match="different|unverifiable|invalid_request"):
+                executor.graph()
+            assert runner.graph is None
+    assert calls == [(TENANT_ID, "maker@example.test")]
+
+
+def test_remaining_da_guidance_has_real_full_checkpoint_profile_and_entrypoint_parity(
+    setup_workspace, monkeypatch,
+):
+    ws = setup_workspace
+    keys = (
+        "CONFIG-013", "EXT-002", "EXT-002-ACL", "DA-SP-FILTER-001", "DA-HANDOFF-001",
+        "QA-001", "QA-002", "QA-012", "PUB-003", "PUB-006", "PUB-011", "DA-RUNTIME-001",
+    )
+    monkeypatch.setitem(registry.PROFILES, "da:test-remaining", registry.ProfileSpec(
+        "da:test-remaining", keys, "Same scoped remaining DA assertions.",
+    ))
+    findings = []
+    for index, options in enumerate((
+        ["--scope", "full", "--invocation-source", "adk"],
+        ["--scope", "full", "--invocation-source", "cli"],
+        ["--profile", "da:test-remaining", "--validation-realm", "dev"],
+        ["--checkpoint", "EXT-002"],
+    )):
+        with responses.RequestsMock(assert_all_requests_are_fired=False) as http:
+            _register_native(http, ws)
+            if index < 2:
+                _register_maker_baseline(http)
+            payload, code = _run_cli(ws, monkeypatch, http, options, f"remaining-{index}")
+            assert code == 0
+            findings.append({key: _row(payload, key) for key in keys if index != 3 or key == "EXT-002"})
+            if index >= 2:
+                assert all(
+                    call.request.url.split("?")[0].endswith(("/components", ws.config["agents"][0]["botId"], "/configuration"))
+                    for call in http.calls
+                )
+            if index == 2:
+                assert payload["profile"] == "da:test-remaining"
+                assert payload["overall"] == "READY"
+    assert findings[0] == findings[1] == findings[2]
+    assert findings[0]["EXT-002"] == findings[3]["EXT-002"]
+    assert all(row["status"] == "Manual" for row in findings[0].values())
+    assert "page URL includes that page" in findings[0]["CONFIG-013"]["remediation"]
+    assert "crawl account" in findings[0]["EXT-002"]["remediation"]
+    assert "scripted deny conservatively blocks all" in findings[0]["EXT-002-ACL"]["remediation"]
+    assert "scripted allow is skipped" in findings[0]["EXT-002-ACL"]["remediation"]
+    assert "managed-property mapping" in findings[0]["DA-SP-FILTER-001"]["remediation"]
+    assert "no setup is required" in findings[0]["DA-SP-FILTER-001"]["result"]
+    assert findings[0]["DA-HANDOFF-001"]["evidence"]["applicability"] == "unknown"
+    assert "standalone HR or IT agent requires no Hub" in findings[0]["DA-HANDOFF-001"]["remediation"]
+    assert "instruction behavior rather than mandatory CEA topics" in findings[0]["QA-001"]["remediation"]
+    assert "deployed-but-unrun" in findings[0]["QA-002"]["remediation"]
+    assert "universal percentage threshold" in findings[0]["QA-012"]["remediation"]
+    assert "publication is not required" in findings[0]["PUB-003"]["remediation"]
+    assert "Agents > All agents > Requests" in findings[0]["PUB-006"]["remediation"]
+    assert "Microsoft 365 Admin" in findings[0]["PUB-006"]["roles"]
+    assert "Do not use standalone Teams" in findings[0]["PUB-011"]["remediation"]
+    assert "non-maker employee" in findings[0]["DA-RUNTIME-001"]["remediation"]
+
+
+@pytest.mark.parametrize("state,expected", [
+    ("Active", "Manual"), ("Inactive", "NotConfigured"),
+    ("unknown", "Manual"), ("absent", "NotConfigured"),
+])
+def test_native_servicenow_guidance_is_optional_and_consistent_in_all_routes(
+    setup_workspace, monkeypatch, state, expected,
+):
+    ws = setup_workspace
+    content = _body(_capture("env004_dependencies.yaml")[1])
+    topic = deepcopy(next(change for change in content["botComponentChanges"] if "shared_service-now" in json.dumps(change)))
+    topic["component"]["status"] = state
+    if state != "absent":
+        ws.content["botComponentChanges"].append(topic)
+        ws.content["connectionReferenceChanges"] = content["connectionReferenceChanges"]
+    keys = ("SN-DA-AUTH-001", "SN-DA-TOPIC-001", "SN-DA-PORTAL-001")
+    monkeypatch.setitem(registry.PROFILES, "da:test-native-servicenow", registry.ProfileSpec(
+        "da:test-native-servicenow", keys, "Native action checks without CEA requirements.",
+    ))
+    findings = []
+    for index, options in enumerate((
+        ["--scope", "full"],
+        ["--profile", "da:test-native-servicenow", "--validation-realm", "dev"],
+        ["--checkpoint", "SN-DA-AUTH-001"],
+    )):
+        with responses.RequestsMock(assert_all_requests_are_fired=False) as http:
+            _register_native(http, ws)
+            if index == 0:
+                _register_maker_baseline(http)
+            payload, _ = _run_cli(ws, monkeypatch, http, options, f"native-servicenow-{index}")
+            findings.append({key: _row(payload, key) for key in keys if index != 2 or key == "SN-DA-AUTH-001"})
+            assert not any("/flows/" in call.request.url or "/connectionreferences" in call.request.url for call in http.calls)
+            if index:
+                assert not any("graph.microsoft" in call.request.url for call in http.calls)
+    assert findings[0] == findings[1]
+    assert findings[0]["SN-DA-AUTH-001"] == findings[2]["SN-DA-AUTH-001"]
+    assert all(row["status"] == expected for row in findings[0].values())
+    if state == "Active":
+        assert "Microsoft Entra ID User Login" in findings[0]["SN-DA-AUTH-001"]["remediation"]
+        assert "Instance name is the short instance name" in findings[0]["SN-DA-AUTH-001"]["remediation"]
+        assert "HRSD Setup Configurations" in findings[0]["SN-DA-TOPIC-001"]["remediation"]
+        assert "ITSM system-topic list" in findings[0]["SN-DA-TOPIC-001"]["remediation"]
+        assert "Set ServiceNow Portal BaseURI" in findings[0]["SN-DA-PORTAL-001"]["remediation"]
+    elif state in {"Inactive", "absent"}:
+        assert all(row["evidence"]["applicability"] == "not_applicable" for row in findings[0].values())
+        assert all(not row["remediation"] for row in findings[0].values())
+    else:
+        assert "could not be established" in findings[0]["SN-DA-AUTH-001"]["result"]
+        assert findings[0]["SN-DA-AUTH-001"]["evidence"]["applicability"] == "unknown"
+
+
+@pytest.mark.parametrize("status", [200, 403])
+def test_teams_sku_absence_is_not_a_da_prerequisite(setup_workspace, monkeypatch, status):
+    ws = setup_workspace
+    require_validated_mock(graph_mock)
+    with responses.RequestsMock(assert_all_requests_are_fired=False) as http:
+        _register_native(http, ws)
+        if status == 200:
+            http.add(**graph_mock.list_subscribed_skus(skus=[]))
+        else:
+            http.add(
+                "GET", f"{graph_mock.GRAPH_BASE}/subscribedSkus",
+                status=status, json={"error": {"code": "Authorization_RequestDenied"}},
+            )
+        payload, code = _run_cli(ws, monkeypatch, http, ["--checkpoint", "PRE-003"])
+    row = _row(payload, "PRE-003")
+    assert code == 0
+    assert row["status"] == ("Passed" if status == 200 else "Manual")
+    if status == 200:
+        assert "0 matching tenant SKU" in row["result"]
+        assert "not a universal DA prerequisite" in row["result"]
+        assert row["remediation"] == ""
+    else:
+        assert "not a universal DA prerequisite" in row["remediation"]
+        assert "Do not buy or assign a Teams license" in row["remediation"]
 
 
 def test_register_once_is_discovered_by_full_checkpoint_and_profile(setup_workspace, monkeypatch):
@@ -654,6 +820,7 @@ def test_passive_history_checks_only_exact_provider_flows_and_validated_recent_s
     runner = SimpleNamespace(
         agent_slug="hr", env_id=admin_mock.MOCK_ENV_ID, tenant_id=TENANT_ID,
         pp_admin=client, scope="checkpoint", da_explicit_selection=True,
+        maker_integrations={"ServiceNow": {"applicability": "enabled"}},
         _da_connection_audit=SimpleNamespace(references=[
             SimpleNamespace(connector_id=connector, flow_ids=[flow_id]),
             SimpleNamespace(connector_id="shared_unrelated", flow_ids=["unrelated-flow"]),
@@ -661,6 +828,7 @@ def test_passive_history_checks_only_exact_provider_flows_and_validated_recent_s
     )
     executor = DAExecutor(runner, SimpleNamespace(), (key,), (registry.REGISTRY[key],), {})
     executor.groups["connections"] = []  # The exact dependency audit above is the producer's pure input.
+    executor.groups["integrations"] = []
     runner.da_executor = executor
     with responses.RequestsMock() as http:
         http.add(**admin_mock.list_flow_runs(flow_id=flow_id, runs=[run]))

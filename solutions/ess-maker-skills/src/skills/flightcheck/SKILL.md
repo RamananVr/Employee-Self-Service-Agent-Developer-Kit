@@ -88,6 +88,14 @@ Run OOB Workday package/runtime checks only for enabled reviewed OOB topics,
 not an arbitrary custom Workday connector. Disabled or unconfigured integrations
 do not create defects or compulsory manual reviews.
 They do not collect release approvals or submitted employee test evidence.
+Native ServiceNow action checks cover employee-delegated authentication,
+HRSD/ITSM setup/system topics and portal record links without requiring legacy
+flows/templates. Knowledge-ingestion authentication and source ACLs are separate.
+SharePoint filtering and Hub/connected-agent setup are optional: unknown
+applicability gets conditional Manual guidance, not mandatory setup or an
+assumed absence. Evaluation and publishing guidance distinguishes test-case
+quality, completed agent evaluation, unpublished maker validation, catalog
+approval/audience and published non-maker use in Microsoft 365 Copilot Chat.
 Skills that need selected validations reference registered checkpoint IDs or
 profiles through the CLI and consume structured JSON. Full discovers eligible
 definitions automatically. Do not duplicate check logic in a skill or turn a

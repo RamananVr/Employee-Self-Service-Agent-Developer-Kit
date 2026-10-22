@@ -201,7 +201,31 @@ Customer-facing categories use one **Workday** group rather than internal module
 
 The check tabs are **All, Passed, Failed, Warnings, Manual**, in that order. Warnings includes recommendations and unverified automatic inspections; Manual includes explicit manual and administrator-verification items. Actual recorded statuses and detailed ledger counts remain unchanged. Optional/not-enabled items remain under All, not Passed or Failed. Customer-facing role labels use **Environment Maker user**, while raw role values remain compatible.
 
-Applicable portal-only settings appear together under **Manual verification**. For the enabled Microsoft-provided Workday integration, `WD-DA-ATTACH-001` names the required flows and gives the Environment Maker user verification steps and instructions for missing or incorrect settings. This is an unverified manual item, not an automatic pass, configuration failure, completion form or release gate.
+Applicable portal-only settings appear together under **Manual verification**. For the enabled Microsoft-provided Workday integration, `WD-DA-ATTACH-001` names both agent connection references (**ESS Workday Runtime** and **ESS Workday Runtime REST Execution**) and guides inspection of their bindings and **Allow permission to share parameters** settings. Flow authorization is checked separately. This is an unverified manual item, not an automatic pass, configuration failure, completion form or release gate.
+
+Native ServiceNow HRSD/ITSM checks distinguish employee-delegated action
+authentication, required setup/system topics and the portal root used for record
+links. They do not require a CEA extension pack, Dataverse templates or legacy
+flows. ServiceNow Knowledge ingestion has its own authentication and
+Simple/Advanced user-criteria contract; a healthy action connection does not
+prove indexing or employee access to knowledge.
+
+Knowledge guidance distinguishes SharePoint site/file scope, indexing and
+allowed/denied employee access. SharePoint filtering and Hub/connected-agent
+setup are optional. When the supported snapshot cannot establish applicability,
+the result stays Manual with conditional steps; it is not an instruction to
+enable the feature. An empty native knowledge projection is not proof that no
+external source is attached. Evaluation guidance separates test-case quality,
+deployed test sets and completed agent evaluations. Publishing guidance
+separates unpublished maker validation, organization approval/audience and
+published non-maker use in Microsoft 365 Copilot Chat.
+
+Graph observations use the existing Microsoft Graph authentication client,
+pinned to the same verified maker and tenant as native inspection; the
+AgentBuilder application is not used to request Graph permissions. Denied
+reads remain scoped Manual findings, while authentication failures remain
+Errors. No administrator role is required merely to start diagnostics, and
+Teams-bearing SKU inventory is not a universal DA licensing requirement.
 
 DA diagnostics exit `1` for confirmed issues or incomplete inspection, and `0` for completed checks with or without non-blocking notes. The diagnostic-only JSON marker and outcome are separate from existing Connect completion rules. DA full diagnostics do not emit the legacy release-outcome telemetry.
 

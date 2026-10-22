@@ -130,7 +130,7 @@ def _applicability(runner, spec):
     if not feature:
         return None
     if feature in {"workday", "workday_oob", "workday_custom", "servicenow"}:
-        if getattr(runner, "da_explicit_selection", False):
+        if feature != "servicenow" and getattr(runner, "da_explicit_selection", False):
             return None
         from .maker_diagnostics import _check_integrations
 
@@ -189,14 +189,26 @@ class DAExecutor:
         self.requested, self.specs, self.aliases = requested, specs, aliases
         self.rows: dict[str, CheckResult] = {}
         self.groups: dict[str, list[CheckResult] | BaseException] = {}
+        self._graph_error: Exception | None = None
 
     def graph(self):
+        from agentbuilder import tenant_id_from_access_token
         from .graph_client import GraphClient
 
+        if self._graph_error is not None:
+            raise self._graph_error
         if self.runner.graph is None:
             client = GraphClient(self.runner.tenant_id, strict_reads=True)
-            client._token = self.runner.connection_dependency_token("https://graph.microsoft.com/.default")
-            client.signed_in_username = self.runner.authenticated_account
+            try:
+                token = client.authenticate(preferred_username=self.runner.authenticated_account)
+                account = client.signed_in_username
+                if not account or account.casefold() != self.runner.authenticated_account.casefold():
+                    raise ValueError("Graph authentication selected a different or unverifiable account.")
+                if tenant_id_from_access_token(token).casefold() != self.runner.tenant_id.casefold():
+                    raise ValueError("Graph authentication selected a different tenant.")
+            except (RuntimeError, ValueError, requests.RequestException) as exc:
+                self._graph_error = exc
+                raise
             self.runner.graph = client
         return self.runner.graph
 
