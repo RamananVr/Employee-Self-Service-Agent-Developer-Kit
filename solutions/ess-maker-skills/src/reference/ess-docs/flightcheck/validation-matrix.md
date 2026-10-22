@@ -9,6 +9,117 @@ and extended with local file validation checks unique to the Copilot Kit.
 
 ---
 
+## DA maker diagnostic scope
+
+The catalog below spans legacy/custom-engine scopes and Connect profiles; it
+is not a required checklist or a promised count for every DA run.
+
+The maker skill and standalone CLI share one DA planner, registry and producer
+path. `full`, explicit checkpoints and profiles reuse the same definitions;
+`local` explicitly limits inspection to local authored files. A selected DA may run read-only diagnostics before
+connection readiness is complete; invocation source does not change coverage.
+Equivalent target, scope, permissions and evidence produce equivalent findings,
+excluding timestamps/duration and actual changes to live data.
+
+DA `full` inspects exactly the selected agent, regardless of whether Dataverse
+is configured. `scripts/flightcheck/da_inventory.csv` attaches DA metadata to
+the existing `REGISTRY`; it is the runtime coverage/disposition inventory, not
+a second executor or a dependency on private planning documents. Its 164
+identities comprise 81 executable requirements, 32 replacements, 25
+legacy implementation definitions, two explicitly excluded assertions,
+11 detail/family selectors, 10 guards and three
+deferred ALM checks. These are definition counts, not 164 executed checks or
+an arbitrary 100-pass target. Historical purposes and source revisions are
+retained separately from current assertions and target scope.
+`legacy` describes the old implementation, not its protocol: current Workday
+DA uses both employee-authenticated REST and SOAP and requires no ISU.
+`excluded` records missing admitted check coverage, not product obsolescence.
+Learn provenance is exposed through each reconciled result's existing
+`doc_link` field, separately from historical producer revisions.
+
+The comprehensive selection includes:
+
+| Check | What it establishes |
+| --- | --- |
+| DA-AGENT-001 | Exact native agent is accessible in the selected environment; no mandatory Dev/ALM enrollment |
+| DA-CONTENT-001 | Readable, correctly identified authored components |
+| ESS-SOLN-001 | Native ESS schema identity and readable content, not package origin or export/import proof |
+| ENV-004 | Required active topic/flow references joined to exact physical bindings; unknown activation, incomplete inventories and inaccessible dependencies remain unverified |
+| ENV-001 / ENV-003 / DA-ENV-LINK-001 | Exact environment identity, observed environment type and declared Dataverse linkage (optional for native-only agents); service ring is distinct from environment type |
+| ENV-002 | Linked Dataverse provisioning state, when exposed by the supported environment read. Database type alone never proves successful provisioning |
+| PRE-001/002/003/006/008/009 / AUTH-001/002/004 | Tenant SKU inventory, active role membership, exact Graph organization, Conditional Access enforcement-state inventory and a small user sample. These do not prove intended-user licensing, effective access, synchronization or require elevating the maker |
+| PRE-004 / ENV-CAPACITY-001 / PRE-005 | Exact environment message-capacity observation and linked billing policies, subscription state and returned cost-budget records; effective capacity and spending sufficiency remain separate comparisons |
+| ENV-008 / INFRA-006 | Effective environment DLP policy inventory and classification of the selected agent's actual connector dependencies |
+| DA-TOPIC-001 | Selected cloud conversation activation inventory; unknown status is unverified, inactive is not a defect |
+| DA-AUTH-001 / DA-INSTRUCTIONS-001 | Observed native sign-in settings and nonempty instructions in the captured template format, not employee sign-in or response quality |
+| WD-INTEGRATION-001 / SN-INTEGRATION-001 | Optional integration applicability: enabled, disabled, configured without active use, not configured or uncertain; disabled/unconfigured is not a defect |
+| WD-CONN-001 / SN-CONN-001 | Exact binding results for the enabled integration's selected-agent references, not unrelated environment connections |
+| SN-FLOW-001 | State of ServiceNow flows actually invoked by this agent, if any; native direct actions do not require flows or legacy templates |
+| WD-DA-PKG/FLOW/AUTH/TOPIC/WIRING-001 | Existing supported OOB Workday setup inspections when reviewed OOB topics are enabled in full; an explicit setup checkpoint/profile may inspect configuration before activation. Custom connectors alone do not require the OOB package |
+| WD-DA-TOPIC-001 | All seven documented Workday system topics must be present once and active; unused optional employee scenarios need not be enabled. Presence/activation does not prove successful employee execution |
+| WD-DA-TOPIC-001 / WD-DA-WIRING-001 | Native component inspection uses the exact selected-agent snapshot independently of Dataverse access; unrelated package/authorization read limits do not hide observed topic defects |
+| WD-ASSIGN-001 / WD-ENTRA-* / WD-CONN-101/102 | Exact configured Workday Entra application, assignments, exposed scope, resource-bound consent and federation/certificate observations. Cross-system agreement and unsupported signing-option reads remain Manual; no tenant-wide first candidate substitutes for an unconfigured application |
+| WD-CONN-012 / WD-REST-001 / WD-RUN-001 / SN-RUN-001 | Runtime-package plus selected-agent reference bindings, saved REST configuration and recent exact invoked-flow history. These do not certify deployed endpoint agreement or current intended-employee execution |
+| DV-CONN-001 / WD-REST-002 | Enabled OOB Workday runtime Dataverse reference and selected local mapped redirect; local evidence does not prove cloud freshness |
+| WD-DA-ATTACH-001 | Manual inspection of both agent connection references, ESS Workday Runtime and ESS Workday Runtime REST Execution, under Settings > Connection Settings > Manage; select the intended Workday connection and enable Allow permission to share parameters on both. Flow authorization is separate; never an automatic pass |
+| WD-CONN-AUTH-001 / WD-API-CLIENT-001 / WD-TENANT-001 / WD-SEC-003 | Manual employee-auth, cross-system IDs/endpoints, SAML bearer grant, Workday Owned Scope, the four functional areas and intended employee domain permissions. Public Worker Reports requires Get under Integration Permissions; extra scenario domains remain conditional |
+| WD-REST-001 | Strict saved HTTPS `/ccx/api` structure, without embedded credentials/query/fragment or extra resource suffix. Valid saved syntax remains Manual until compared with the actual deployed Workday connection and tenant |
+| WD-REF-001 / LOCAL-TC-001 | Current OOB runtime-topic or custom reference IDs/labels compared with applicable tenant values; old template-file counting resolves to this shared check. XML-like topic entries are supported; unused reference-data types need no customization |
+| WD-DA-MAKER-001 | Fresh unpublished Test-pane employee-ID or intended read-only scenario; no automatic email/phone update and no claim of published non-maker success |
+| Selected local checks | Instructions/identity, starter-prompt notes, informational conversation inventory and placeholder-description detection; no sibling scan, description word-count threshold or legacy minimum-topic/User Context variable requirements |
+| Knowledge, connected search, handoff, QA and publishing checks | Supported authored configuration observations plus scoped Manual verification for source mapping, indexing, effective employee access, evaluation, audience and rollout. No approval forms, employee transactions or default ALM probes |
+
+Every planned definition produces exactly one result, including a scoped
+fallback or explicit not-applicable disposition. The additive JSON `coverage`
+object records requested, planned and emitted IDs, aliases, completed automatic
+checks, manual verification, not-applicable items and execution limitations.
+Missing/duplicate producer rows, malformed data and unexpected service/auth
+failures are Errors, not successful or routine manual results. A denied
+delegated read or unsupported observation becomes Manual with the check ID,
+purpose, target, responsible role, ordered steps and missing-setting guidance.
+Failed identity/content prerequisites prevent dependent remote reads.
+
+The explicit `local` scope remains unauthenticated in both entrypoints and
+proves only local authored state, not deployment freshness. It never substitutes
+for a requested full run. Missing extracted content is an inspection
+limitation, not proof of a broken cloud agent.
+
+Reports separate confirmed issues, unverified inspection, notes and Passed
+checks, with explicit optional-integration dispositions and zero-inclusive
+status totals. Specific access-denied inspections can need administrator
+review without becoming mandatory approvals. The private local run header
+includes exact target IDs, the verified account and duration.
+`ISSUES_FOUND` / `SOME_CHECKS_UNVERIFIED` exit `1`;
+`SETUP_CHECKS_PASSED` / `CHECKED_WITH_NOTES` exit `0`. JSON adds
+`diagnostic_only` (versioned contract: `diagnosticOnly`) for this route.
+Native-selected DA checkpoints share the diagnostic path. Profiles reuse the
+same findings while preserving the existing `READY` / `READY_WITH_WARNINGS` /
+`NOT_READY` aggregate and versioned Connect-consumer contract. Pre-agent setup
+without a saved native `botId`, explicit legacy profiles and older narrow
+scopes retain their compatibility routes; they are not comprehensive runs.
+
+DA full does not run licensing approvals, ALM promotion or
+revision-provenance gates, feature attestations, UAT evidence collection or
+the mutating connectivity probe. Applicable
+portal-only checks are grouped under Manual verification with their IDs,
+purpose, responsible person, detailed steps and missing-setting guidance.
+They remain Manual, with no completion/attestation form or release gate.
+Customer categories consolidate Workday module names without changing raw
+JSON identifiers or legacy/Connect contracts. `PUB-001`, `PUB-002` and
+`ENV-004-GRS` are explicitly deferred for the shared DA route; existing legacy
+ALM behavior outside that route remains unchanged.
+
+### Adding checks for a skill
+
+Implement and verify a supported producer, then register its shared
+`CheckpointSpec` and `DAValidation` metadata (or extend the shipped CSV-backed
+definitions). Include purpose, target scope, prerequisites, applicability,
+API-contract provenance, next-step owner and complete manual fallback.
+An executable DA definition is automatically discovered by `full`; do not
+add another per-check full-run list. Reference its stable ID in a named profile
+for the skill. Skills consume structured JSON and own workflow progression,
+not duplicate validation logic or rewrite Manual findings into Passed.
+
 ## Priority Levels
 
 | Level    | Meaning                                         |
@@ -69,9 +180,10 @@ Workday → Entra Admin + Workday Admin).
 
 ### Native no-Dataverse agent readiness (DA-xxx)
 
-These checkpoints replace Dataverse solution/reference checks for a native
-AgentBuilder agent. If the config also has a `dataverseEndpoint`, FlightCheck
-preserves the hybrid/legacy route instead.
+The shared DA route uses the maker scope above, including hybrid agents with Dataverse.
+The table below describes retained older narrow-scope behavior;
+its Dev-only authoring admission and candidate-connection fallback are not
+used by DA full diagnostics.
 
 | ID             | Check                                                                                                                                                                                                                                                        | Priority | Method                                                            | Doc Link |
 | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------- | ----------------------------------------------------------------- | -------- |

@@ -421,13 +421,6 @@ class TestAgentBuilderNativeScopes:
             "expected_filter",
         ),
         [
-            (
-                "full",
-                ["Native Agent", "Environment", "Local Files", "Publishing"],
-                True,
-                True,
-                None,
-            ),
             ("environment", ["Environment"], False, True, None),
             (
                 "servicenow",

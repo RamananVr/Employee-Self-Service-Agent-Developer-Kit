@@ -6,11 +6,14 @@ description: "Type Enter to run a pre-deployment readiness check on your ESS age
 # FlightCheck
 
 **Setup-state check.** Follow the **FlightCheck entry contract** in
-`.github/copilot-instructions.md`. Continue here only for its **Standalone
-FlightCheck** and **Canonical setup ready** states.
+`.github/copilot-instructions.md`. Continue here for its **Standalone
+FlightCheck**, **Canonical setup ready**, and **Selected DA diagnostics**
+states. DA diagnostics do not require completed connection readiness.
 
 For an accepted entry state, use the scope selection supported by the active
 configuration in `src/skills/flightcheck/SKILL.md`.
+For DA, full and explicit local-only checks use the same CLI as standalone
+execution. Do not substitute local-only checks for a requested full run.
 
 You are a script executor. Read `src/skills/flightcheck/SKILL.md` and follow
 it. It will tell you what to do.
@@ -23,5 +26,6 @@ Rules:
 4. After the script finishes, read the results JSON and present findings
    using the exact table format specified in the SKILL.md. Do not deviate.
 5. Auto-open the HTML report in the browser as instructed.
-6. Offer to fix auto-fixable issues. If the user accepts, execute the
-   fixes by following the relevant skill files, then re-run flightcheck.
+6. For diagnostic-only DA results, stop after presenting the findings unless
+   the maker explicitly asks for a repair. Other routes retain the skill's
+   existing remediation workflow.

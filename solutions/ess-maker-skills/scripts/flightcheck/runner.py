@@ -165,6 +165,30 @@ class RunResult:
     requested_validation_context: dict[str, Any] = field(default_factory=dict)
     validation_context: dict[str, Any] = field(default_factory=dict)
     client_availability: dict[str, dict[str, Any]] = field(default_factory=dict)
+    diagnostic_only: bool = False
+    coverage: dict[str, Any] = field(default_factory=dict)
+
+
+def maker_diagnostic_outcome(result: RunResult) -> str:
+    """Describe configuration inspection, never release approval."""
+    if any(row.status == Status.FAILED.value for row in result.results):
+        return "ISSUES_FOUND"
+    if not result.results or any(
+        row.status in {Status.BLOCKED.value, Status.ERROR.value, Status.SKIPPED.value}
+        or row.evidence.get("dependencyCoverageComplete") is False
+        for row in result.results
+    ):
+        return "SOME_CHECKS_UNVERIFIED"
+    if any(
+        row.status != Status.PASSED.value
+        and not (
+            row.status == Status.NOT_CONFIGURED.value
+            and row.evidence.get("applicability") in {"not_configured", "disabled", "configured", "not_applicable"}
+        )
+        for row in result.results
+    ):
+        return "CHECKED_WITH_NOTES"
+    return "SETUP_CHECKS_PASSED"
 
 
 _VALIDATION_REALMS = frozenset({"dev", "test", "prod"})
@@ -412,6 +436,10 @@ def save_results(run_result: RunResult, output_dir: str = "workspace/flightcheck
         "results": [asdict(r) for r in run_result.results],
         "contract": versioned_run_result_to_dict(run_result),
     }
+    if run_result.diagnostic_only:
+        data["diagnostic_only"] = True
+    if run_result.coverage:
+        data["coverage"] = run_result.coverage
     with open(results_path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)
 
@@ -572,6 +600,8 @@ def versioned_run_result_to_dict(run_result: RunResult) -> dict[str, Any]:
     """
     return {
         "schemaVersion": FLIGHTCHECK_RESULT_SCHEMA_VERSION,
+        **({"diagnosticOnly": True} if run_result.diagnostic_only else {}),
+        **({"coverage": dict(run_result.coverage)} if run_result.coverage else {}),
         "profile": run_result.profile,
         "profileCheckpoints": list(run_result.profile_checkpoints),
         "profileFamilies": dict(run_result.profile_families),
@@ -615,6 +645,10 @@ def _generate_html_report(r: RunResult) -> str:
     one checks card, but it does not change which checks run or how statuses
     are computed.
     """
+    if r.diagnostic_only:
+        from .maker_report import render_maker_report
+
+        return render_maker_report(r)
     buckets = bucket_results(r.results)
 
     verdict_class, verdict_icon, verdict_headline, verdict_sub = _verdict_text(r)
@@ -1373,6 +1407,8 @@ def _render_header(
     verdict_icon: str,
     verdict_headline: str,
     verdict_sub: str,
+    *,
+    reading_guide: str = "",
 ) -> str:
     """Render the Fluent 2 report header with dynamic run metadata."""
     rerun = "/flightcheck" if r.scope == "full" else f"/flightcheck --scope {r.scope}"
@@ -1413,6 +1449,36 @@ def _render_header(
         "Employee Self-Service FlightCheck \u00b7 "
         f"{_html_escape(r.scope.title())} deployment readiness"
     )
+    extra_meta = ""
+    scope_meta = f'<div>Scope: <b>{_html_escape(r.scope)}</b></div>'
+    rerun_meta = f'<div>Re-run: <code>{_html_escape(rerun)}</code></div>'
+    if r.diagnostic_only:
+        context = r.validation_context
+        brand_title = "Employee Self-Service FlightCheck"
+        agent_meta = str(context.get("agentName") or context.get("agentSlug") or "Selected agent")
+        extra_meta = "".join(
+            f'<div>{label}: <b>{_html_escape(str(context.get(key) or "Not verified"))}</b></div>'
+            for label, key in (
+                ("Agent ID", "agentId"), ("Environment", "environmentName"),
+                ("Environment ID", "environmentId"), ("Environment URL", "environmentUrl"),
+                ("Environment type", "environmentType"),
+                ("Signed-in account", "accountEmail"),
+            )
+        )
+        manual_count = sum(row.status == Status.MANUAL.value for row in r.results)
+        if r.coverage:
+            extra_meta += (
+                f'<div>FlightChecks: <b>{len(r.coverage["planned"])} planned '
+                f'({r.coverage["automaticCompleted"]} automatically completed, '
+                f'{r.coverage["manual"]} manual, {r.coverage["notApplicable"]} not applicable, '
+                f'{r.coverage["limitations"]} unverified)</b></div>'
+            )
+        else:
+            extra_meta += (
+                f'<div>FlightChecks: <b>{len(r.results)} total '
+                f'({len(r.results) - manual_count} automated, {manual_count} manual)</b></div>'
+            )
+        scope_meta = rerun_meta = ""
     return (
         '  <header class="report">\n'
         '    <div class="head-pad">\n'
@@ -1423,15 +1489,17 @@ def _render_header(
         '      </div>\n'
         '      <div class="meta">\n'
         f'        <div>Agent: <b>{_html_escape(agent_meta)}</b></div>\n'
-        f'        <div>Scope: <b>{_html_escape(r.scope)}</b></div>\n'
+        f'        {extra_meta}\n'
+        f'        {scope_meta}\n'
         f'        <div>Run: <b>{_html_escape(r.started)}</b></div>\n'
         f'        <div>Completed in: <b>{r.duration_secs}s</b></div>\n'
-        f'        <div>Re-run: <code>{_html_escape(rerun)}</code></div>\n'
+        f'        {rerun_meta}\n'
         '      </div>\n'
         '      <div class="hr"></div>\n'
         f'      <div class="verdict {verdict_class}">{verdict_svg} '
         f'{_html_escape(verdict_headline)}</div>\n'
         f'      <span class="verdict-note">{_html_escape(verdict_sub)}</span>\n'
+        f'      {reading_guide}\n'
         '    </div>\n'
         '  </header>\n'
     )

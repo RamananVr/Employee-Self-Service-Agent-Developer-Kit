@@ -163,16 +163,25 @@ Explicit evaluation push uses its separate selected-set deployment flow and
 the existing evaluation APIs, including the native new-copy behavior described
 above. It does not add new native update/delete or review-metadata endpoints.
 
-### ✈️ FlightCheck — Pre-Deployment Readiness Validation
+### ✈️ FlightCheck — Agent Setup Diagnostics
 
-In a DA-GA workspace, `/flightcheck` validates the extracted local agent files without requiring Dataverse or remote-service authentication. The separate standalone FlightCheck install retains the comprehensive live-environment checks for licensing, identity, infrastructure, integrations, agent configuration, and publishing readiness.
+In a DA-GA workspace, `/flightcheck` and the standalone command use the same selected-agent diagnostics and result contract. Full discovers applicable definitions from the shared registry, including agent/content, identity, tenant-license observations, environment capacity/billing/policy, connections, knowledge, optional integrations and manual QA/publishing guidance. These are scoped observations, not proof of intended-user entitlement or current employee success. Denied reads and unsupported observations receive detailed Manual guidance; unexpected service/response failures remain Errors. Local-only is explicit, not a restriction on makers. A configured DA can run read-only diagnostics before connection readiness is complete; FlightCheck does not change setup state.
 
-Run `/flightcheck` from Copilot Chat, or run the local-files scope directly from this solution's directory:
+For a saved native DA, checkpoint and profile selections use the same producers and prerequisite closure as full. A skill references stable check IDs or named profiles; adding an eligible shared definition automatically includes it in full. Structured JSON retains the existing result contract and adds planned/emitted coverage accounting. Connect profiles preserve their existing aggregate contract, and pre-agent/legacy compatibility routes are unchanged. See the [DA coverage inventory and contributor path](src/reference/ess-docs/flightcheck/validation-matrix.md#da-maker-diagnostic-scope).
+
+DA reports distinguish **problems found**, **could not verify**, notes and passed checks. They provide a next step and an appropriate owner, not deployment approval. They do not require review JSON, administrator attestations, licensing/capacity approvals, ALM export/import or employee test evidence. Portal settings and employee scenarios that were not tested remain suggestions, never Passed checks.
+
+Run `/flightcheck` from Copilot Chat, or run the equivalent full command directly from this solution's directory:
 
 ```bash
 cd solutions/ess-maker-skills
-python scripts/flightcheck/cli.py --scope local
+python scripts/flightcheck/cli.py --scope full
 ```
+
+Use `--scope local` when you explicitly want only the selected agent's extracted
+files checked without remote authentication. Both entrypoints save
+`results.json` and `report.html`. Given the same target, scope, permissions and
+evidence, findings agree; timestamps, duration and changed live data may differ.
 
 **Standalone install (no VS Code or Copilot required):**
 
@@ -184,7 +193,19 @@ iex (irm https://raw.githubusercontent.com/microsoft/Employee-Self-Service-Agent
 
 Re-run the same command to change your environment or agent. See [`setup/README.md`](../../setup/README.md) for details.
 
-**What it checks (41+ automated checks across 8 categories):**
+**DA full check:** exact selected agent/environment access and metadata; authored content, ESS identity, sign-in configuration, instructions and conversation activation; logical-to-physical bindings required by active conversations/flows; and selected local files. Workday and ServiceNow are optional: the report distinguishes enabled, disabled, configured without active use, not configured and uncertain discovery. Enabled integrations receive scoped binding checks; invoked ServiceNow flows receive state checks without requiring legacy templates. Reviewed, enabled OOB Workday topics additionally select package, flow, authorization, wiring, runtime Dataverse binding and local redirect checks; arbitrary custom Workday connectors do not require that package. Dependency reads use the same account and tenant. Limited access or unknown activation is unverified, not a demonstrated configuration defect. This does not execute employee tasks or prove publication/runtime success.
+
+The offline report retains the Fluent report layout, includes the actual agent name/ID, environment details, authenticated account, elapsed time and total FlightCheck count (split into automated and manual), and shows all status totals, including zeros. Technical run settings remain available in JSON rather than cluttering the header. Totals count recorded results, not every entry in the cross-scope catalog; optional integration discovery expands only the applicable diagnostics. Disabled or unconfigured optional integrations do not prevent setup checks from passing. Administrator review applies only to a specific access-denied inspection, not a blanket approval.
+
+Customer-facing categories use one **Workday** group rather than internal module names. Run details and check cards use two columns on desktop and one on mobile; the reading guide is a short bullet list inside the main header. **Readiness at a glance** includes the colored status legend and category tiles, with the numeric status table available to expand. Each check shows its stable ID, purpose and recorded status, plus the result, responsible person and status-specific next step.
+
+The check tabs are **All, Passed, Failed, Warnings, Manual**, in that order. Warnings includes recommendations and unverified automatic inspections; Manual includes explicit manual and administrator-verification items. Actual recorded statuses and detailed ledger counts remain unchanged. Optional/not-enabled items remain under All, not Passed or Failed. Customer-facing role labels use **Environment Maker user**, while raw role values remain compatible.
+
+Applicable portal-only settings appear together under **Manual verification**. For the enabled Microsoft-provided Workday integration, `WD-DA-ATTACH-001` names the required flows and gives the Environment Maker user verification steps and instructions for missing or incorrect settings. This is an unverified manual item, not an automatic pass, configuration failure, completion form or release gate.
+
+DA diagnostics exit `1` for confirmed issues or incomplete inspection, and `0` for completed checks with or without non-blocking notes. The diagnostic-only JSON marker and outcome are separate from existing Connect completion rules. DA full diagnostics do not emit the legacy release-outcome telemetry.
+
+**Legacy/custom-engine full checks retain their existing categories:**
 
 | Category | What's validated |
 |----------|------------------|
@@ -198,11 +219,11 @@ Re-run the same command to change your environment or agent. See [`setup/README.
 | Publishing | Golden prompts, UAT sign-off, managed solution export, admin approval |
 
 **Key capabilities:**
-- **Multi-agent** — automatically scans every agent under `workspace/agents/`, not just the active one
+- **Multi-agent** — DA diagnostics inspect the selected agent only; legacy full checks retain their existing multi-agent scan
 - **HTML report** — opens in your browser with color-coded results, priority highlighting, and clickable remediation links
 - **Run history** — every run is archived in `workspace/flightcheck/history/` for trend tracking
-- **Workday SOAP tests** — tests all 17 ESS workflows against the actual Workday API (reads credentials from `.vscode/mcp.json`, prompts for ISU password at runtime — never saved to disk)
-- **Auto-fix offer** — after presenting results, the agent offers to fix issues it can handle (run `/connect`, `/scan`, enable flows) and re-runs the check
+- **Workday SOAP tests** — available in legacy integration scopes; not executed by the DA maker setup diagnostic
+- **Safe remediation** — DA diagnostics suggest targeted actions without changing tenant configuration; legacy workflows retain their existing repair flow
 - **Graceful degradation** — runs whatever checks your permissions allow; skips the rest with clear messages
 
 **Scopes** for targeted re-runs:

@@ -45,6 +45,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 
+from .da_checks import DAValidation, attach_inventory, validate_da_definitions
+
 from flightcheck.runner import Priority, Role
 from flightcheck.checks.entra_app import run_entra_app_checks
 from flightcheck.checks.environment import (
@@ -148,6 +150,8 @@ class CheckpointSpec:
     # WD-001 is an External-Systems checkpoint we only register because the
     # below-early-return Workday checks need it to hydrate _workday_flows).
     listable: bool = True
+    da: DAValidation | None = None
+    legacy_family: str = ""
 
 
 @dataclass
@@ -754,6 +758,7 @@ _SPECS: list[CheckpointSpec] = [
     ),
 ]
 
+_SPECS = attach_inventory(_SPECS, CheckpointSpec)
 REGISTRY: dict[str, CheckpointSpec] = {spec.key: spec for spec in _SPECS}
 
 
@@ -1167,6 +1172,7 @@ def matches(target: str, emitted_id: str) -> bool:
             emitted_spec is not None
             and not emitted_spec.is_family
             and emitted_spec.key != fam_key
+            and emitted_spec.legacy_family != fam_key
         ):
             return False
         return emitted_id == fam_key or emitted_id.startswith(fam_key + "-")
@@ -1207,6 +1213,10 @@ def validate_registry() -> None:
     # deliberately stubbed/narrowed REGISTRY in a unit test doesn't trip on
     # profiles referencing checkpoints it left out.
     if _SHIPPED_REGISTRY_KEYS <= frozenset(REGISTRY):
+        try:
+            validate_da_definitions(REGISTRY)
+        except ValueError as exc:
+            raise RegistryError(str(exc)) from exc
         for profile in PROFILES.values():
             for checkpoint_id in profile.checkpoint_ids:
                 if resolve(checkpoint_id) is None:

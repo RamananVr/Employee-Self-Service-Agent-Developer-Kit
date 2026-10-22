@@ -646,7 +646,7 @@ def run_workday_checks(runner) -> list[CheckResult]:
             targets = (scope.split(":", 1)[1],)
         for target in targets:
             spec = registry.resolve(target)
-            if spec is not None and spec.key == family:
+            if spec is not None and (spec.key == family or spec.legacy_family == family):
                 return True
         return False
 

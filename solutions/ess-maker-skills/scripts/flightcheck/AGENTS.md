@@ -11,6 +11,52 @@ in `tests/AGENTS.md`. They complement each other; you need both.
 
 ## Architecture overview
 
+DA maker `full`/`local` diagnostics use diagnostic-only outcomes, not release
+approval. The maker skill and standalone command use the same CLI execution
+path for the same scope; invocation source must not change coverage or findings.
+Local-only is explicit, not a restriction on makers. Read-only selected-DA
+diagnostics do not depend on completed connection readiness.
+Keep exact subject/account/tenant binding, verified read contracts
+and explicit incomplete-discovery errors. Do not add review/evidence forms,
+mandatory administrator approvals or employee transactions to this route.
+Native-selected DA checkpoints and profiles reuse these same producers.
+Profiles preserve the existing Connect aggregate/result contract; pre-agent
+setup without a native bot ID and explicit legacy routes remain compatible.
+Local evidence never
+proves deployed freshness; portal suggestions never become Passed checks.
+Customer reports consolidate internal module labels (for example, all Workday
+checks use one Workday group). Applicable portal-only checks belong in the
+single Manual verification section with their ID, purpose, owner, detailed
+steps and missing-setting guidance; they do not require an approval form.
+
+`da_inventory.csv` attaches typed `DAValidation` metadata to the existing
+`REGISTRY`. It records executable definitions and explicit replaced, legacy,
+excluded, detail, guard and deferred dispositions, preserving historical purpose/source
+and current assertion scope. `da_execution.py` derives full selection,
+checkpoint/profile prerequisite closure, permission-aware fallback and
+planned/emitted coverage from this same registry. An eligible registration
+must run in full without another per-check orchestration edit. Skills reference
+stable IDs/profiles; never copy producers or result interpretation into prose.
+Include the owner, ordered manual steps and missing-setting action with every
+admitted definition. Use the API tier mandated by the cassette index.
+Denied reads and unsupported observations become scoped Manual findings;
+malformed responses, auth/service/program errors and missing/duplicate output
+remain explicit Errors. A failed identity/content guard prevents dependent
+reads. Optional disabled/absent integrations are not defects, and unknown
+applicability is not absence. Returned tenant inventory or historical flow
+samples never prove effective employee entitlement or current employee success.
+
+Legacy classifies a specific old implementation/assertion, not a protocol or
+product capability. Current DA Workday uses both REST and SOAP as the signed-in
+employee, without an ISU. `excluded` means no verified assertion is admitted to
+this implementation; do not present it as a product limitation. Keep Learn
+provenance in the optional `documentation` field, separate from historical
+producer paths/revisions; shared results expose it through `doc_link`.
+Required Workday system topics differ from intentionally unused optional
+employee scenarios. Connection bindings, flow authorization, parameter sharing
+and employee success are separate assertions. No employee write probe or new
+Workday administrator credential is required.
+
 FlightCheck validates customer deployments by querying multiple APIs.
 Each API requires its own authentication and has different data
 available:
@@ -287,8 +333,9 @@ and do the per-tier verification.
 
 ### 5. Wire and run
 
-1. Wire the new check into `_check_single_agent()` (for per-agent
-   checks) or the appropriate scope runner.
+1. For the shared DA route, register the producer and complete DA metadata;
+   reference its ID from any skill profile. Full discovery is registry-derived.
+   Only older non-DA/narrow scopes require their existing scope-runner wiring.
 2. Run from the **repository root** (not from `scripts/flightcheck/`):
    ```bash
    python scripts/flightcheck/cli.py --scope <scope>
