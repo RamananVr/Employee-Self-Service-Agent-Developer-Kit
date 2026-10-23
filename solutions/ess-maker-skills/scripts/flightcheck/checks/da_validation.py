@@ -254,16 +254,31 @@ def _dlp(runner, spec):
             spec, "Passed", f"{len(effective)} effective policy record(s) returned for this environment; connector restrictions are evaluated by INFRA-006.",
             evidence={"effectivePolicies": len(effective)},
         )
-    connectors = {normalize_connector_id(ref.connector_id) for ref in runner._da_connection_audit.references}
+    audit = runner._da_connection_audit
+    incomplete = bool(audit.warnings or audit.blocked or audit.read_limitations)
+    connectors = {normalize_connector_id(ref.connector_id) for ref in audit.references}
+    limitations = {
+        "dependencyCoverageComplete": not incomplete,
+        "verificationLimitations": audit.warnings + ([audit.blocked] if audit.blocked else []),
+        "readLimitations": audit.read_limitations,
+    }
+    discovery_error = any(item["kind"] == "error" for item in audit.read_limitations)
+    if incomplete and (not connectors or not effective):
+        finding = "Connector discovery is incomplete; no complete DLP assertion was possible."
+        return result_for(spec, "Error", finding, evidence=limitations) if discovery_error else manual_result(runner, spec, finding, evidence=limitations)
     if not connectors:
         return result_for(
             spec, "NotConfigured", "No selected active connector dependencies were discovered.",
             evidence={"applicability": "not_applicable"},
         )
-    if not effective:
+    if not effective and not incomplete:
         return result_for(spec, "Passed", "The complete policy inventory contains no policy effective on this environment.")
     evaluation = evaluate_connector_classification(connectors, effective)
-    evidence = asdict(evaluation)
+    evidence = {**asdict(evaluation), **limitations}
+    if incomplete and not evaluation.blocked:
+        if discovery_error:
+            return result_for(spec, "Error", "Connector discovery encountered a service/response error; DLP coverage is incomplete.", evidence=evidence)
+        return manual_result(runner, spec, "Only part of the required connector inventory was inspected; the returned classifications do not establish complete DLP coverage.", evidence=evidence)
     if not evaluation.blocked and (evaluation.indeterminate or evaluation.cross_group):
         return manual_result(runner, spec, "Selected connectors have indeterminate or cross-group classifications; actual action combinations need comparison.", evidence=evidence)
     return result_for(
@@ -499,12 +514,63 @@ def _workday_references(runner, spec):
     )
 
 
+def _litmus_manual(runner, spec, evidence, *, running):
+    snapshot = getattr(runner, "_da_native_snapshot", None) or {}
+    bot = snapshot.get("changeset", {}).get("bot", {})
+    environment = getattr(runner, "_maker_environment_snapshot", None) or {}
+    agent_name = bot.get("displayName") or runner.agent_slug
+    environment_name = environment.get("properties", {}).get("displayName") or runner.env_id
+    rerun_step = "Once the agent finishes answering, rerun the Workday Litmus Test."
+    if running:
+        finding = "A recent Workday flow is still running. Wait for it to finish, then rerun this check; do not submit another prompt."
+        steps = [
+            f'Wait for the current answer in "{agent_name}" in environment "{environment_name}" to finish. Do not create duplicate test conversations.',
+            "If it does not finish, ask the exact flow owner to inspect the in-progress run in Power Automate.",
+            rerun_step,
+        ]
+    else:
+        finding = "No recent completed Workday response could be scored from the returned history (last 60 minutes). FlightCheck does not run the test for you. Complete the steps below, then rerun this check."
+        steps = [
+            f'Sign in to [Copilot Studio](https://copilotstudio.microsoft.com/) with the Microsoft work account shown in this report. If already signed in, confirm you are using that account. Select environment "{environment_name}", then open agent "{agent_name}".',
+            "Click Test in the top-right corner to open the agent's Test pane. Start a new conversation.",
+            'In that Test pane, send this exact question: "What is my employee ID". Send it to the agent, not to VS Code Copilot Chat.',
+            "If the agent asks you to sign in to Workday or connect, use your own Workday employee account. This is separate from signing in to Copilot Studio. Wait for the agent to finish answering and check the answer against your own Workday information. Keep the employee ID private; do not paste it into FlightCheck.",
+            rerun_step,
+        ]
+    evidence = {
+        **evidence, "manualVerificationSteps": steps,
+        "ifMissingOrIncorrect": (
+            "If sign-in or the question fails, stop and resolve that error before rerunning. "
+            "If Employee ID is intentionally disabled, do not enable it for this check: ask the agent owner for an enabled, approved read-only Workday question that invokes the inspected flow. Do not submit employee changes. "
+            "If the answer succeeds but this check still reports no recent response, ask the flow owner to inspect the exact flow's history in the same environment. Do not keep sending test questions to fix missing history access."
+        ),
+    }
+    row = manual_result(runner, spec, finding, evidence=evidence)
+    row.roles = ["ESS Maker / Agent Developer"]
+    return row
+
+
 def _run_history(runner, spec):
     from .servicenow import _classify_run as classify_servicenow
     from .workday import _classify_run as classify_workday
     from ..maker_diagnostics import _check_connections
 
     runner.da_executor.group("connections", _check_connections)
+    audit = runner._da_connection_audit
+    if getattr(audit, "warnings", []) or getattr(audit, "blocked", "") or getattr(audit, "read_limitations", []):
+        evidence = {
+            "verificationLimitations": audit.warnings,
+            "readLimitations": getattr(audit, "read_limitations", []),
+            "dependencyCoverageComplete": False,
+        }
+        finding = "The exact invoked-flow inventory could not be completely inspected. A new test prompt cannot resolve missing discovery access."
+        if any(item["kind"] == "error" for item in evidence["readLimitations"]):
+            return result_for(spec, "Error", finding, evidence=evidence)
+        evidence["manualVerificationSteps"] = [
+            "Ask the selected agent's flow/connection owner to inspect the discovery or permission limitation in the technical details.",
+            "Verify access to the exact selected environment and invoked flows, then rerun this checkpoint. Do not repeatedly submit test prompts to fix read access.",
+        ]
+        return manual_result(runner, spec, finding, evidence=evidence)
     connector = "shared_service-now" if spec.key.startswith("SN-") else "shared_workdaysoap"
     ids = {
         flow for ref in runner._da_connection_audit.references
@@ -519,7 +585,23 @@ def _run_history(runner, spec):
     now = datetime.now(timezone.utc)
     pp = _Access(runner).admin(flow=True)
     for flow_id in sorted(ids):
-        runs = _collection(pp.get_flow_runs(runner.env_id, flow_id, strict_collection=True))
+        try:
+            runs = _collection(pp.get_flow_runs(runner.env_id, flow_id, strict_collection=True))
+        except PermissionError as exc:
+            if connector != "shared_workdaysoap":
+                raise
+            return manual_result(
+                runner, spec,
+                f"The exact Workday flow's run history was denied: {exc}. A new test prompt cannot repair history access.",
+                evidence={
+                    "flowId": flow_id, "recentRuns": observations,
+                    "readLimitation": "permission_denied", "httpStatus": 403,
+                    "manualVerificationSteps": [
+                        "Ask the exact invoked-flow owner to verify read access to the reported flow in the selected environment in Power Automate.",
+                        "After access is restored, rerun only WD-RUN-001. Do not submit additional test prompts to fix denied run-history access.",
+                    ],
+                },
+            )
         for run in runs:
             properties = run.get("properties")
             if not isinstance(properties, dict) or not isinstance(properties.get("startTime"), str):
@@ -537,17 +619,37 @@ def _run_history(runner, spec):
                 and not (properties.get("response") or {}).get("name")
             ):
                 classification = "pending"
-            observations.append({"flowId": flow_id, "classification": classification, "startTime": properties["startTime"]})
+            observations.append({
+                "flowId": flow_id, "runId": run.get("name"),
+                "classification": classification, "status": properties.get("status"),
+                "responseBranch": (properties.get("response") or {}).get("name"),
+                "startTime": properties["startTime"],
+            })
     scored = [item for item in observations if item["classification"] != "pending"]
     evidence = {"recentRuns": observations, "windowMinutes": 60, "evidenceBoundary": "returned_exact_flow_history_not_current_employee_execution"}
     if not scored:
+        if connector == "shared_workdaysoap":
+            return _litmus_manual(
+                runner, spec, evidence,
+                running=any(item["status"] in {"Running", "Waiting", "Paused", "Suspended"} for item in observations),
+            )
         return manual_result(runner, spec, "No scoreable agent-facing runs in the returned pages within the last 60 minutes.", evidence=evidence)
     success = any(item["classification"] == "success" for item in scored)
-    return result_for(
+    row = result_for(
         spec, "Passed" if success else "Failed",
         f"{len(scored)} scoreable recent exact-flow run(s); successful agent-facing response observed={success}. "
+        f"{sum(item['classification'] != 'success' for item in scored)} scored failure(s) were also observed. "
+        "At least one success is sufficient for this passive litmus; it does not mean every flow or scenario is healthy. "
         "This sample is not a current intended-employee smoke test.", evidence=evidence,
     )
+    if connector == "shared_workdaysoap" and not success:
+        row.remediation = (
+            "Ask the exact flow/connection owner to investigate the failed response branch and binding in the technical details. "
+            'After correcting the confirmed issue, open the selected agent in Copilot Studio Test and ask "What is my employee ID" '
+            "if enabled, or another approved read-only Workday question. Wait for completion, then rerun only WD-RUN-001. "
+            "A top-level Succeeded flow can still contain a caught Workday failure."
+        )
+    return row
 
 
 def run_registered_da_check(runner):

@@ -26,7 +26,8 @@ Local evidence never
 proves deployed freshness; portal suggestions never become Passed checks.
 Customer reports consolidate internal module labels (for example, all Workday
 checks use one Workday group). Label selected-agent local content as
-Agent source files, not generic Local files; preserve raw recorded categories.
+part of the Agent report category, alongside cloud checks; name its local
+source scope in each finding and preserve raw recorded categories.
 Applicable portal-only checks belong in the single Manual verification section
 with their ID, purpose, owner, detailed
 steps and missing-setting guidance; they do not require an approval form.
@@ -47,6 +48,21 @@ of strings) for shared DA checks, or `CheckResult.custom_tags` (a list of string
 in a producer. Shared execution merges both without duplicates, including on
 fallback results. The report renders these as neutral, searchable custom tags;
 never add per-ID tag mappings to the UI or use tags as readiness/status signals.
+
+Single-checkpoint DA reports show only the requested canonical finding(s),
+using coverage selection/replacement metadata, not per-ID UI rules. Execute
+prerequisites and retain their blockers, technical results and full JSON
+accounting. Header totals describe all executed validations; distinguish them
+from requested finding counts and include the exact targeted rerun command.
+WD-RUN-001 defaults to a separate workday-litmus output folder. Its no-fresh-run
+guidance starts with the selected agent's read-only Test-pane scenario, while
+running, failed and inaccessible history receive different next steps.
+Keep litmus instructions code-defined in the producer's
+`manualVerificationSteps` and `ifMissingOrIncorrect` evidence. Interpolate
+verified target labels, not AI-generated prose. Keep the rerun instruction
+entrypoint-neutral; the focused report header retains the exact terminal command.
+The report renders these fields and the skill repeats them without paraphrasing;
+keep the agent Test-pane question separate from the VS Code rerun command.
 
 `da_inventory.csv` attaches typed `DAValidation` metadata to the existing
 `REGISTRY`. It records executable definitions and explicit replaced, legacy,

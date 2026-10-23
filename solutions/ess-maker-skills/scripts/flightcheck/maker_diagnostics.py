@@ -7,6 +7,7 @@ from dataclasses import asdict
 from functools import partial
 from pathlib import Path
 from types import SimpleNamespace
+import subprocess
 import uuid
 
 import requests
@@ -85,7 +86,7 @@ def _configure(runner, args):
         authenticate_flightcheck_dependency, tenant_id=tenant_id, ring=ring,
         account_hint=account, cache_path=cache,
     )
-    if args.environment_url:
+    if args.environment_url or (getattr(args, "profile", None) and runner.env_url):
         _Access(runner).dataverse()
 
 
@@ -384,6 +385,23 @@ def run_maker_diagnostics(args, config) -> RunResult:
     runner.dv_token = runner.pp_admin = runner.agentbuilder = runner.connectivity = None
     runner.graph = runner.powerplatform = runner.azure_arm = None
     runner.da_observations = {}
+    runner.rerun_command = ""
+    if checkpoint:
+        command = ["python", str(Path("scripts") / "flightcheck" / "cli.py"), "--checkpoint", checkpoint]
+        if runner.agent_slug:
+            command.extend(("--agent-slug", runner.agent_slug))
+        for option, value in (
+            ("--environment-url", args.environment_url), ("--environment-id", args.environment_id),
+            ("--tenant-id", args.tenant_id), ("--ring", args.ring),
+            ("--validation-realm", args.validation_realm), ("--preferred-username", args.preferred_username),
+            ("--token-cache", getattr(args, "token_cache", None)),
+        ):
+            if value:
+                command.extend((option, str(value)))
+        command.extend(("--output", str(args.output), "--invocation-source", "cli", "--select-targets", "never"))
+        if getattr(args, "no_telemetry", False):
+            command.append("--no-telemetry")
+        runner.rerun_command = subprocess.list2cmdline(command)
     requested, specs, aliases = plan_da_checks(
         checkpoint=checkpoint, profile=profile, local=scope == "local",
     )
@@ -406,10 +424,36 @@ def run_maker_diagnostics(args, config) -> RunResult:
     runner.register("Selected-agent checks", executor.run)
     result = runner.run()
     result.diagnostic_only = True
+    result.rerun_command = runner.rerun_command
     result.coverage = executor.coverage()
     if profile:
+        from .registry import profile_family_contract, profile_requirements
+
         result.profile = profile
         result.profile_checkpoints = list(requested)
+        result.profile_families = profile_family_contract(profile)
+        authenticated = bool(getattr(runner, "authenticated_account", ""))
+        dataverse = getattr(runner, "_da_dependency_dataverse", None)
+        available = {
+            "agentbuilder": runner.agentbuilder is not None,
+            "dataverse": bool(dataverse and dataverse[1]),
+            "connectivity": runner.connectivity is not None,
+            "graph": runner.graph is not None,
+            "powerplatform": runner.powerplatform is not None,
+            "azure_arm": runner.azure_arm is not None,
+            "pp_admin": getattr(runner, "_da_pp_read_client", None) is not None,
+            "pva": getattr(runner, "pva", None) is not None,
+        }
+        result.client_availability = {
+            client: {
+                "required": True,
+                "available": available.get(client, False),
+                "authenticatedAccountVerified": authenticated and available.get(client, False),
+                "reason": "" if authenticated and available.get(client, False)
+                else "The required client did not complete verified authentication.",
+            }
+            for client in sorted(profile_requirements(profile).clients)
+        }
     else:
         result.overall = maker_diagnostic_outcome(result)
     selected = active_agent(config, runner.agent_slug)

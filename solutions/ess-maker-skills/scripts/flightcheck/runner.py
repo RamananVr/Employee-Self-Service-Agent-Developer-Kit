@@ -168,6 +168,7 @@ class RunResult:
     client_availability: dict[str, dict[str, Any]] = field(default_factory=dict)
     diagnostic_only: bool = False
     coverage: dict[str, Any] = field(default_factory=dict)
+    rerun_command: str = ""
 
 
 def maker_diagnostic_outcome(result: RunResult) -> str:
@@ -441,6 +442,8 @@ def save_results(run_result: RunResult, output_dir: str = "workspace/flightcheck
         data["diagnostic_only"] = True
     if run_result.coverage:
         data["coverage"] = run_result.coverage
+    if run_result.rerun_command:
+        data["rerun_command"] = run_result.rerun_command
     with open(results_path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)
 
@@ -604,6 +607,7 @@ def versioned_run_result_to_dict(run_result: RunResult) -> dict[str, Any]:
         "schemaVersion": FLIGHTCHECK_RESULT_SCHEMA_VERSION,
         **({"diagnosticOnly": True} if run_result.diagnostic_only else {}),
         **({"coverage": dict(run_result.coverage)} if run_result.coverage else {}),
+        **({"rerunCommand": run_result.rerun_command} if run_result.rerun_command else {}),
         "profile": run_result.profile,
         "profileCheckpoints": list(run_result.profile_checkpoints),
         "profileFamilies": dict(run_result.profile_families),
@@ -1486,6 +1490,12 @@ def _render_header(
                 f'({len(r.results) - manual_count} automated, {manual_count} manual)</b></div>'
             )
         scope_meta = rerun_meta = ""
+        if r.scope == "checkpoint" and r.coverage.get("requested"):
+            extra_meta += (
+                f'<div>Requested: <b>{_html_escape(", ".join(r.coverage["requested"]))}</b></div>'
+            )
+        if r.rerun_command:
+            rerun_meta = f'<div>Re-run only this selection: <code>{_html_escape(r.rerun_command)}</code></div>'
     return (
         '  <header class="report">\n'
         '    <div class="head-pad">\n'

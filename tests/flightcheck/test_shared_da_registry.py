@@ -818,6 +818,8 @@ def test_billing_scopes_links_and_does_not_hide_unhealthy_subscription_behind_bu
 @pytest.mark.parametrize("sample,expected", [
     ("success", "Passed"), ("failure", "Failed"), ("stale", "Manual"),
     ("child", "Manual"), ("future", "Error"), ("naive", "Error"),
+    ("running", "Manual"), ("mixed", "Passed"), ("caught_failure", "Failed"),
+    ("denied", "Manual"), ("unauthorized", "Error"), ("service_error", "Error"), ("malformed", "Error"),
 ])
 def test_passive_history_checks_only_exact_provider_flows_and_validated_recent_samples(provider, sample, expected):
     from flightcheck.pp_admin_client import PPAdminClient
@@ -839,8 +841,14 @@ def test_passive_history_checks_only_exact_provider_flows_and_validated_recent_s
         response_name = ""
     run = admin_mock.flow_run(
         env_id=admin_mock.MOCK_ENV_ID, flow_id=flow_id, start_time=timestamp,
-        status="Failed" if sample == "failure" else "Succeeded", response_name=response_name,
+        status="Failed" if sample == "failure" else "Running" if sample == "running" else "Succeeded",
+        response_name=(
+            "Respond_to_Copilot_with_failure_errorMessage" if provider == "workday"
+            else "Respond_to_Copilot_-_Failure"
+        ) if sample == "caught_failure" else response_name,
     )
+    if sample == "malformed":
+        run["properties"] = None
     client = PPAdminClient(TENANT_ID)
     client.set_read_tokens(flow_token="fixture-read-token")
     runner = SimpleNamespace(
@@ -857,20 +865,50 @@ def test_passive_history_checks_only_exact_provider_flows_and_validated_recent_s
     executor.groups["integrations"] = []
     runner.da_executor = executor
     with responses.RequestsMock() as http:
-        http.add(**admin_mock.list_flow_runs(flow_id=flow_id, runs=[run]))
+        runs = [run]
+        if sample == "mixed":
+            failed = deepcopy(run)
+            failed["properties"]["status"] = "Failed"
+            runs.append(failed)
+        http.add(**admin_mock.list_flow_runs(
+            flow_id=flow_id, runs=runs,
+            status={"denied": 403, "unauthorized": 401, "service_error": 500}.get(sample, 200),
+        ))
         row = executor.run(runner)[0]
-        assert len(http.calls) == 1
-        assert flow_id in http.calls[0].request.url
+        assert http.calls
+        assert all(flow_id in call.request.url for call in http.calls)
     assert row.status == expected
     assert row.custom_tags == (["Workday Litmus Test"] if provider == "workday" else [])
     if expected in {"Passed", "Failed"}:
         assert "scoreable recent exact-flow" in row.result
         assert "not a current intended-employee smoke test" in row.result
     elif expected == "Manual":
-        assert "No scoreable" in row.result
-        assert row.evidence["windowMinutes"] == 60
+        if provider == "workday":
+            steps = "\n".join(row.evidence["manualVerificationSteps"])
+            if sample == "denied":
+                assert "history was denied" in row.result
+                assert "Do not submit additional test prompts" in steps
+                assert "What is my employee ID" not in steps
+                assert row.evidence["flowId"] == flow_id
+            elif sample == "running":
+                assert "rerun the Workday Litmus Test" in steps
+                assert "still running" in row.result
+                assert "do not create duplicate" in steps.lower()
+                assert "What is my employee ID" not in steps
+            else:
+                assert "rerun the Workday Litmus Test" in steps
+                assert "No recent completed Workday response" in row.result
+                assert "What is my employee ID" in steps and "Click Test in the top-right corner" in steps
+        else:
+            assert ("denied" if sample == "denied" else "No scoreable") in row.result
+        if sample == "denied":
+            assert row.evidence["httpStatus"] == 403
+        else:
+            assert row.evidence["windowMinutes"] == 60
     else:
-        assert "timestamp" in row.result
+        assert row.evidence["executionError"] is True
+        if sample in {"future", "naive"}:
+            assert "timestamp" in row.result
     assert bool(row.remediation) is (expected != "Passed")
 
 
@@ -1073,6 +1111,7 @@ def test_inactive_flow_discovery_retains_permission_vs_service_error(status, kin
     ("denied", "Manual"), ("malformed", "Error"),
 ])
 def test_dlp_wrapper_evaluates_exact_connectors_without_hiding_policy_read_limitations(mode, expected):
+    from flightcheck.checks._connection_dependencies import ConnectionAudit, Reference
     from flightcheck.pp_admin_client import PPAdminClient
 
     require_validated_mock(admin_mock)
@@ -1087,12 +1126,12 @@ def test_dlp_wrapper_evaluates_exact_connectors_without_hiding_policy_read_limit
     client.set_read_tokens(powerapps_token="fixture-read-token")
     runner = SimpleNamespace(
         agent_slug="hr", env_id=admin_mock.MOCK_ENV_ID, pp_admin=client,
-        da_observations={}, _da_connection_audit=SimpleNamespace(references=[
-            SimpleNamespace(connector_id=connector),
+        da_observations={}, _da_connection_audit=ConnectionAudit(references=[
+            Reference("agent", "reference", connector, "connection"),
         ]),
     )
     if mode == "blocked_unknown":
-        runner._da_connection_audit.references.append(SimpleNamespace(connector_id="shared_service-now"))
+        runner._da_connection_audit.references.append(Reference("agent", "other", "shared_service-now", "other"))
     key = "INFRA-006"
     executor = DAExecutor(runner, SimpleNamespace(), (key,), (registry.REGISTRY[key],), {})
     runner.da_executor = executor
@@ -1127,3 +1166,239 @@ def test_da_registry_rejects_invalid_prerequisite_graph_before_execution(monkeyp
     ))
     with pytest.raises(ValueError, match="Missing DA|Cyclic DA"):
         plan_da_checks(checkpoint=original.key)
+
+
+@pytest.mark.parametrize("blocked,read_error,no_references,no_policies", [
+    (False, False, False, False), (True, False, False, False),
+    (False, True, False, False), (False, True, True, False),
+    (False, False, False, True),
+])
+def test_dlp_partial_discovery_retains_defects_without_passing(blocked, read_error, no_references, no_policies):
+    from flightcheck.checks._connection_dependencies import ConnectionAudit, Reference
+
+    connector = "/providers/Microsoft.PowerApps/apis/shared_workdaysoap"
+    policy = admin_mock.dlp_policy_modern(
+        blocked=[connector] if blocked else [], business=[] if blocked else [connector],
+    )
+    audit = ConnectionAudit(
+        references=[] if no_references else [Reference("hr", "ref", connector, "connection")],
+        failures=["Another binding is missing."],
+        warnings=["An active flow could not be inspected."],
+        read_limitations=[{"kind": "error" if read_error else "denied", "context": "flow"}],
+    )
+    runner = SimpleNamespace(
+        agent_slug="hr", env_id=admin_mock.MOCK_ENV_ID,
+        da_observations={"dlp_policies": [] if no_policies else [policy]}, _da_connection_audit=audit,
+    )
+    key = "INFRA-006"
+    executor = DAExecutor(runner, SimpleNamespace(), (key,), (registry.REGISTRY[key],), {})
+    runner.da_executor = executor
+    executor.rows["ENV-004"] = CheckResult("ENV-004", "Connections", "High", "Failed", "Bindings", "Missing binding.")
+    row = executor.run(runner)[0]
+    assert row.status == ("Failed" if blocked else "Error" if read_error else "Manual"), row.result
+    assert row.evidence["dependencyCoverageComplete"] is False
+
+
+@pytest.mark.parametrize("profile", [
+    "workday-da:setup-readiness", "workday-da:external-prerequisites",
+    "workday-da:package-ready", "workday-da:dataverse-ready",
+    "workday-da:post-connection", "workday-da:post-agent-wiring",
+    "workday-da:post-runtime", "workday-da:final",
+])
+def test_real_cli_profile_adapter_output_is_consumed_by_connect(setup_workspace, monkeypatch, profile):
+    """Domain rows are pure inputs; exercise real native reads, planning and contracts."""
+    from dataclasses import replace
+    from flightcheck.checks import _connection_dependencies
+    from tests.scripts.test_workday_connect_flightcheck import _state, _record_rest_target
+    from workday_connect_flightcheck import evaluate_contract
+    from workday_connect_readiness_policy import PROFILE_POLICIES
+
+    ws = setup_workspace
+    environment = _body(next(
+        item for item in _capture("flightcheck_pp_admin.yaml")
+        if "api.bap.microsoft.com" in item["request"]["uri"] and "/environments/" in item["request"]["uri"]
+    ))
+    url = environment["properties"]["linkedEnvironmentMetadata"]["instanceUrl"]
+    ws.config.update({"dataverseEndpoint": url, "restBaseUrl": "https://example.test/ccx/api"})
+    monkeypatch.setattr(_connection_dependencies, "discover_tenant", lambda _: TENANT_ID)
+    # Keep native, endpoint and portal-only producers real. Supply other domain
+    # observations without adding an invented external API response.
+    for key in PROFILE_POLICIES[profile].checkpoints:
+        spec = registry.REGISTRY[key]
+        if spec.da.strategy in {"native", "rest_endpoint", "manual", "workday_entra"}:
+            continue
+        def domain_row(_runner, current=spec):
+            return [CheckResult(current.key, current.category_label, current.priority, "Passed", current.da.purpose, "Domain observation fixture.")]
+        monkeypatch.setitem(registry.REGISTRY, key, replace(
+            spec, category_fn=domain_row, da=replace(spec.da, strategy="custom", feature=""),
+        ))
+    with responses.RequestsMock(assert_all_requests_are_fired=False) as http:
+        _register_native(http, ws)
+        payload, code = _run_cli(ws, monkeypatch, http, [
+            "--profile", profile, "--validation-realm", "dev",
+            "--environment-url", url, "--preferred-username", "maker@example.test",
+        ])
+    state = _state()
+    state["scope"].update({
+        "environmentId": ws.config["environmentId"], "dataverseUrl": url,
+        "entraTenantId": TENANT_ID, "agent": ws.config["agents"][0],
+    })
+    state["operators"]["powerPlatformMaker"]["username"] = "maker@example.test"
+    _record_rest_target(state, ws.config["restBaseUrl"])
+    for phase, action in (
+        ("entra", "administrator-configuration-verified"),
+        ("workday-admin", "administrator-response-validated"),
+        ("runtime", "flow-attachment-confirmed"),
+    ):
+        state["phases"][phase]["completedActions"].append(action)
+        state["phases"][phase]["evidence"].append({"action": action})
+    assert code == 0
+    assert set(payload["client_availability"]) == set(PROFILE_POLICIES[profile].clients)
+    assert evaluate_contract(payload["contract"], state, profile)["accepted"] is True
+
+
+@pytest.mark.parametrize("variant", ["no_endpoint", "configured_endpoint", "wrong_account", "denied_endpoint"])
+def test_real_setup_profile_keeps_optional_endpoint_and_rejects_unverified_target(setup_workspace, monkeypatch, variant):
+    from flightcheck.checks import _connection_dependencies
+    from tests.scripts.test_workday_connect_flightcheck import _state
+    from workday_connect_flightcheck import evaluate_contract, WorkdayConnectFlightCheckError
+
+    ws = setup_workspace
+    profile = "workday-da:setup-readiness"
+    state = _state()
+    url = "https://orgmocktenant.crm.dynamics.com" if variant != "no_endpoint" else ""
+    if url:
+        ws.config["dataverseEndpoint"] = url
+        monkeypatch.setattr(_connection_dependencies, "discover_tenant", lambda _: TENANT_ID)
+    if variant == "wrong_account":
+        ws.auth.return_value = ("token", TENANT_ID, "other@example.test")
+    with responses.RequestsMock(assert_all_requests_are_fired=False) as http:
+        _register_native(http, ws)
+        if variant == "denied_endpoint":
+            def denied(*_args, **_kwargs):
+                raise PermissionError("The selected environment read was denied.")
+            monkeypatch.setattr(_connection_dependencies._Access, "admin", denied)
+        payload, code = _run_cli(ws, monkeypatch, http, [
+            "--profile", profile, "--validation-realm", "dev", "--preferred-username", "maker@example.test",
+        ])
+    state["scope"].update({
+        "environmentId": ws.config["environmentId"], "dataverseUrl": url,
+        "entraTenantId": TENANT_ID, "agent": ws.config["agents"][0],
+    })
+    state["operators"]["powerPlatformMaker"]["username"] = "maker@example.test"
+    if variant in {"wrong_account", "denied_endpoint"}:
+        assert code == (1 if variant == "wrong_account" else 0)
+        assert _row(payload, "DA-AGENT-001")["status"] in {"Blocked", "Manual"}
+        with pytest.raises(WorkdayConnectFlightCheckError):
+            evaluate_contract(payload["contract"], state, profile)
+    else:
+        assert code == 0
+        assert evaluate_contract(payload["contract"], state, profile)["accepted"] is True
+        assert payload["validation_context"]["environmentUrl"].rstrip("/") == url
+
+
+def test_local_inventory_denied_fallback_has_no_minimum(monkeypatch):
+    from flightcheck import maker_diagnostics
+
+    def denied(_):
+        raise PermissionError("Selected workspace is unreadable.")
+    monkeypatch.setattr(maker_diagnostics, "_check_local", denied)
+    key = "TOPIC-011"
+    runner = SimpleNamespace(agent_slug="hr", env_id="")
+    executor = DAExecutor(runner, SimpleNamespace(), (key,), (registry.REGISTRY[key],), {})
+    runner.da_executor = executor
+    row = executor.run(runner)[0]
+    assert row.status == "Manual"
+    assert "no required minimum" in row.remediation
+    assert "minimum of five" not in row.remediation
+
+
+@pytest.mark.parametrize("bad_identity", [False, True])
+def test_litmus_default_output_is_focused_and_preserves_full_report(setup_workspace, monkeypatch, bad_identity):
+    import re
+
+    ws = setup_workspace
+    full = ws.root / "workspace" / "flightcheck" / "report.html"
+    full.parent.mkdir()
+    full.write_text("Existing full report", encoding="utf-8")
+    if bad_identity:
+        ws.content["bot"]["cdsBotId"] = "00000000-0000-4000-8000-000000009991"
+    (ws.root / ".local" / "config.json").write_text(json.dumps(ws.config), encoding="utf-8")
+    monkeypatch.setattr("sys.argv", [
+        "flightcheck", "--checkpoint", "WD-RUN-001", "--no-open", "--no-telemetry",
+        "--preferred-username", "maker@example.test", "--validation-realm", "dev",
+    ])
+    with responses.RequestsMock(assert_all_requests_are_fired=False) as http:
+        _register_native(http, ws)
+        with pytest.raises(SystemExit):
+            cli.main()
+    folder = full.parent / "workday-litmus"
+    data = json.loads((folder / "results.json").read_text(encoding="utf-8"))
+    html = (folder / "report.html").read_text(encoding="utf-8")
+    cards = re.findall(r'<article class="finding"[^>]*>(.*?)</article>', html, re.S)
+    assert len(cards) == 1 and ">WD-RUN-001</code>" in cards[0]
+    assert data["coverage"]["requested"] == ["WD-RUN-001"]
+    assert len(data["results"]) == 3
+    assert "3 planned" in html and "2 supporting validation(s)" in html
+    assert "--checkpoint WD-RUN-001" in html
+    assert "--preferred-username maker@example.test" in data["rerun_command"]
+    assert "--validation-realm dev" in data["rerun_command"]
+    assert "--no-telemetry" in data["rerun_command"]
+    assert "Supporting validation:" in html
+    target_index = next(index for index, row in enumerate(data["results"]) if row["checkpoint_id"] == "WD-RUN-001")
+    assert f'href="#finding-{target_index}">View requested finding</a>' in html
+    assert data["rerun_command"] == data["contract"]["rerunCommand"]
+    assert full.read_text(encoding="utf-8") == "Existing full report"
+    if bad_identity:
+        assert _row(data, "WD-RUN-001")["status"] == "Blocked"
+        assert "Dependent reads were not attempted" in cards[0]
+
+
+@pytest.mark.parametrize("service_error", [False, True])
+def test_litmus_discovery_failure_does_not_request_another_prompt(service_error):
+    from flightcheck.checks._connection_dependencies import ConnectionAudit
+
+    runner = SimpleNamespace(
+        agent_slug="hr", env_id="environment", scope="checkpoint", da_explicit_selection=True,
+        _da_connection_audit=ConnectionAudit(
+            warnings=["Could not read an invoked flow."],
+            read_limitations=[{"kind": "error" if service_error else "permission_denied"}],
+        ),
+    )
+    key = "WD-RUN-001"
+    executor = DAExecutor(runner, SimpleNamespace(), (key,), (registry.REGISTRY[key],), {})
+    executor.groups["connections"] = []
+    runner.da_executor = executor
+    row = executor.run(runner)[0]
+    assert row.status == ("Error" if service_error else "Manual")
+    assert "What is my employee ID" not in row.remediation
+    assert row.evidence["dependencyCoverageComplete"] is False
+
+
+@pytest.mark.parametrize("has_labels", [False, True])
+def test_litmus_instructions_name_the_target_and_separate_agent_test_from_chat_rerun(has_labels):
+    from flightcheck.checks.da_validation import _litmus_manual
+
+    runner = SimpleNamespace(agent_slug="hr", env_id="target-environment")
+    if has_labels:
+        runner._da_native_snapshot = {"changeset": {"bot": {"displayName": "HR Test Agent"}}}
+        runner._maker_environment_snapshot = {"properties": {"displayName": "Workday Test Environment"}}
+    row = _litmus_manual(runner, registry.REGISTRY["WD-RUN-001"], {"recentRuns": []}, running=False)
+    steps = row.evidence["manualVerificationSteps"]
+    assert len(steps) == 5
+    assert steps[0].startswith("Sign in to [Copilot Studio]")
+    assert "Microsoft work account shown in this report" in steps[0]
+    assert ('"Workday Test Environment"' if has_labels else '"target-environment"') in steps[0]
+    assert ('"HR Test Agent"' if has_labels else '"hr"') in steps[0]
+    assert "Start a new conversation" in steps[1]
+    assert "Click Test in the top-right corner" in steps[1]
+    assert '"What is my employee ID"' in steps[2]
+    assert "not to VS Code Copilot Chat" in steps[2]
+    assert "Wait for the agent to finish" in steps[3]
+    assert "separate from signing in to Copilot Studio" in steps[3]
+    assert "Keep the employee ID private" in steps[3]
+    assert steps[4] == "Once the agent finishes answering, rerun the Workday Litmus Test."
+    assert "FlightCheck does not run the test for you" in row.result
+    assert "do not enable it" in row.evidence["ifMissingOrIncorrect"]
+    assert "Do not keep sending test questions" in row.evidence["ifMissingOrIncorrect"]
+    assert "publishing" not in "\n".join(steps).lower()

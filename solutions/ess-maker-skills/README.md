@@ -205,7 +205,22 @@ The check tabs are **All, Passed, Failed, Warnings, Manual**, in that order. War
 
 Checks can supply optional custom tags, shown with purple borders beneath the finding's status and included in the main search. For example, `WD-RUN-001` carries **Workday Litmus Test**. Tags are defined by the check, not mapped to IDs in the report, and do not change its status, scope or verification claims.
 
-**Agent source files** checks inspect only the selected agent's instructions, starter prompts and topic files in the ADK workspace, not personal files. These local authoring checks do not prove that the deployed agent has the same content or that employee scenarios work.
+**Agent** groups cloud configuration checks with selected-agent source-file checks. The latter inspect instructions, starter prompts and topic files in the ADK workspace, not personal files. Their local scope remains explicit: they do not prove that the deployed agent has the same content or that employee scenarios work.
+
+For a focused Workday litmus, use `/flightcheck WD-RUN-001` or
+`/flightcheck wd litmus test`, or run the CLI from the maker-kit directory:
+
+```powershell
+python scripts/flightcheck/cli.py --checkpoint WD-RUN-001
+```
+
+The CLI defaults this check to `workspace/flightcheck/workday-litmus`, preserving
+the full-suite report. The HTML retains the same header and shows only the
+requested finding; prerequisite observations and blockers remain in technical
+details and complete JSON. With no recent completed response, it guides the
+maker through a read-only Copilot Studio Test-pane question and a targeted
+rerun. It only reads existing exact-flow history: even a Passed observation
+does not certify every scenario, the maker's specific prompt or release readiness.
 
 Applicable portal-only settings appear together under **Manual verification**. For the enabled Microsoft-provided Workday integration, `WD-DA-ATTACH-001` names both agent connection references (**ESS Workday Runtime** and **ESS Workday Runtime REST Execution**) and guides inspection of their bindings and **Allow permission to share parameters** settings. Flow authorization is checked separately. This is an unverified manual item, not an automatic pass, configuration failure, completion form or release gate.
 

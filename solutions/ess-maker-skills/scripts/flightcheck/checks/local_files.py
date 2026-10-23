@@ -653,6 +653,30 @@ def _check_topic_descriptions(agent_path: Path, label: str, runner=None, agent_n
         if not maker_diagnostics and word_count < _MIN_DESCRIPTION_WORDS:
             too_short.append(f"{display_name} ({word_count} words)")
 
+    if maker_diagnostics:
+        status = Status.FAILED.value if has_placeholder else Status.SKIPPED.value if unparseable else Status.PASSED.value
+        finding = f"Inspected {checked} local description(s); description length does not establish routing quality."
+        if has_placeholder:
+            finding += " Placeholder text found: " + "; ".join(has_placeholder) + "."
+        if unparseable:
+            finding += " Could not inspect YAML files: " + ", ".join(unparseable) + "."
+        remediation = ""
+        if has_placeholder:
+            remediation = f"Open {studio_link} and replace placeholder description text with the intended routing guidance."
+        if unparseable:
+            remediation += (
+                f" Open the listed topics in {studio_link} and confirm they load in the Code editor. "
+                "If they load, refresh the local extraction; do not hand-edit exporter-generated YAML merely to clear this limitation."
+            )
+        return [CheckResult(
+            roles=[Role.ESS_MAKER.value], checkpoint_id="CONFIG-014",
+            category=f"Topics ({label})", priority=Priority.MEDIUM.value, status=status,
+            description=f"{label}: Local description inventory",
+            result=finding, remediation=remediation.strip(),
+            evidence={"inspectedDescriptions": checked, "unparseableFiles": unparseable,
+                      "placeholderDescriptions": has_placeholder},
+        )]
+
     # If a file couldn't be parsed even after quoting Copilot Studio's
     # XML-attribute-style keys, surface a single low-noise Skipped row so
     # there's an audit trail. We deliberately do NOT recommend "fix the

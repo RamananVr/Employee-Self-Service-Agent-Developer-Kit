@@ -128,7 +128,29 @@ portal-only checks are grouped under Manual verification with their IDs,
 purpose, responsible person, detailed steps and missing-setting guidance.
 They remain Manual, with no completion/attestation form or release gate.
 Customer categories consolidate Workday module names without changing raw
-JSON identifiers or legacy/Connect contracts. `PUB-001`, `PUB-002` and
+JSON identifiers or legacy/Connect contracts. Cloud and selected local-source
+findings share the Agent category while retaining their separate assertion
+scope and original recorded categories.
+
+`WD-RUN-001` has the code-defined Workday Litmus Test tag. Its no-recent-response
+guidance uses the selected agent's unpublished Test pane and an enabled,
+approved read-only question such as "What is my employee ID". Running flows
+require waiting, confirmed failures require repair, and denied history access
+does not call for repeated test prompts. One recent scoreable agent-facing
+success is sufficient for this passive check; mixed failures remain disclosed
+and no prompt/employee correlation is claimed. Run just this check with
+`python scripts/flightcheck/cli.py --checkpoint WD-RUN-001 --agent-slug {AGENT_SLUG}`.
+The default `workspace/flightcheck/workday-litmus` output preserves a full
+report. Focused HTML shows requested findings only; prerequisite blockers and
+complete execution counts remain in its header, technical details and JSON.
+
+Profiles emit declared client availability and verified target context.
+Connect can reconcile a Manual saved REST observation only with its existing
+validated Workday-admin response and matching maker-confirmed live connection
+target; it does not change the standalone result to Passed or add mandatory
+litmus correlation to Connect completion.
+
+`PUB-001`, `PUB-002` and
 `ENV-004-GRS` are explicitly deferred for the shared DA route; existing legacy
 ALM behavior outside that route remains unchanged.
 

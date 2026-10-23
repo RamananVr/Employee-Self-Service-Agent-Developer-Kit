@@ -2633,8 +2633,8 @@ def main():
         help="Validation scope (default: full). Mutually exclusive with --checkpoint/--profile.",
     )
     parser.add_argument(
-        "--output", default="workspace/flightcheck",
-        help="Output directory (default: workspace/flightcheck)",
+        "--output", default=None,
+        help="Output directory (default: workspace/flightcheck; WD-RUN-001 uses its workday-litmus subdirectory)",
     )
     parser.add_argument(
         "--environment-url",
@@ -2806,6 +2806,11 @@ def main():
              "JSON, then exit without running any checks.",
     )
     args = parser.parse_args()
+    if args.output is None:
+        args.output = (
+            os.path.join("workspace", "flightcheck", "workday-litmus")
+            if args.checkpoint == "WD-RUN-001" else "workspace/flightcheck"
+        )
     if args.alm_import_probe and not args.alm_import_target_environment_id:
         parser.error(
             "--alm-import-target-environment-id is required with "

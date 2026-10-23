@@ -892,12 +892,96 @@ def test_source_file_category_names_the_agent_workspace_without_changing_recorde
     result.diagnostic_only = True
     before = deepcopy(result)
     html = _generate_html_report(result)
-    assert '<div class="syn-name">Agent source files</div>' in html
-    assert 'href="#cat-agent-source-files"' in html
-    assert 'id="cat-agent-source-files"' in html
+    assert '<div class="syn-name">Agent</div>' in html
+    assert 'href="#cat-agent"' in html
+    assert 'id="cat-agent"' in html
     assert f'<div class="syn-name">{category}</div>' not in html
     assert result == before
     assert row.category == category
+
+
+@pytest.mark.parametrize("extra,expected", [
+    (None, "Skipped"), ("modelDescription: Find leave information.\n", "Skipped"),
+    ("modelDescription: '[TODO]'\n", "Failed"),
+])
+def test_da_local_cli_aggregates_parse_limits_and_known_description_defects(setup_workspace, monkeypatch, extra, expected):
+    ws = setup_workspace
+    topics = ws.root / "workspace" / "agents" / "hr" / "topics"
+    topics.mkdir()
+    (topics / "broken.mcs.yml").write_text("modelDescription: [\n", encoding="utf-8")
+    if extra:
+        (topics / "leave.mcs.yml").write_text(extra, encoding="utf-8")
+    (ws.root / ".local" / "config.json").write_text(json.dumps(ws.config), encoding="utf-8")
+    monkeypatch.setattr("sys.argv", [
+        "flightcheck", "--scope", "local", "--output", "report", "--no-open", "--no-telemetry",
+    ])
+    with pytest.raises(SystemExit):
+        cli.main()
+    data = json.loads((ws.root / "report" / "results.json").read_text(encoding="utf-8"))
+    rows = [row for row in data["results"] if row["checkpoint_id"] == "CONFIG-014"]
+    assert len(rows) == 1
+    assert rows[0]["status"] == expected
+    assert "broken.mcs.yml" in rows[0]["result"]
+    assert rows[0]["evidence"]["unparseableFiles"] == ["broken.mcs.yml"]
+    if expected == "Failed":
+        assert rows[0]["evidence"]["placeholderDescriptions"]
+    ws.auth.assert_not_called()
+
+
+def test_agent_group_combines_cloud_and_source_checks_without_merging_observations():
+    from flightcheck.runner import _generate_html_report
+
+    cloud = ["DA-AGENT-001", "DA-CONTENT-001", "ESS-SOLN-001", "CONFIG-012", "DA-AUTH-001", "DA-INSTRUCTIONS-001"]
+    local = ["CONFIG-007", "CONFIG-005", "TOPIC-011", "CONFIG-014"]
+    rows = [
+        CheckResult(key, "Native Agent" if key in cloud else "Local Files", "High", "Passed",
+                    "Cloud configuration" if key in cloud else "Local source only", "Observed.")
+        for key in cloud + local
+    ]
+    runner = FlightCheckRunner(scope="full")
+    runner.register("Observations", lambda _: rows)
+    result = runner.run()
+    result.diagnostic_only = True
+    before = deepcopy(result)
+    html = _generate_html_report(result)
+    assert html.count('<div class="syn-name">Agent</div>') == 1
+    assert '10 recorded check(s)' in html
+    assert "Local source only" in html and "Cloud configuration" in html
+    assert result == before
+    assert len(re.findall(r'<article class="finding"', html)) == 10
+
+
+@pytest.mark.parametrize("use_alias", [False, True])
+def test_focused_manual_report_keeps_supporting_links_and_original_results(use_alias):
+    from flightcheck.runner import _generate_html_report
+
+    runner = FlightCheckRunner(scope="checkpoint")
+    runner.register("Observations", lambda _: [
+        CheckResult("DA-AGENT-001", "Native Agent", "High", "Passed", "Agent access", "Verified."),
+        CheckResult(
+            "WD-RUN-001", "Workday", "High", "Manual", "Recent response", "No recent response.",
+            evidence={"manualVerificationSteps": ["Use the selected Test pane.", "Rerun this checkpoint."]},
+            custom_tags=["Workday Litmus Test"],
+        ),
+    ])
+    result = runner.run()
+    result.diagnostic_only = True
+    result.coverage = {
+        "requested": ["LEGACY-SELECTOR" if use_alias else "WD-RUN-001"],
+        "aliases": {"LEGACY-SELECTOR": ["WD-RUN-001"]} if use_alias else {},
+        "planned": ["DA-AGENT-001", "WD-RUN-001"], "emitted": ["DA-AGENT-001", "WD-RUN-001"],
+        "automaticCompleted": 1, "manual": 1, "notApplicable": 0, "limitations": 0,
+    }
+    before = deepcopy(result)
+    html = _generate_html_report(result)
+    cards = re.findall(r'<article class="finding"[^>]*>(.*?)</article>', html, re.S)
+    assert len(cards) == 1 and "Workday Litmus Test" in cards[0]
+    assert "Use the selected Test pane." in cards[0]
+    assert "Supporting validation:" in html
+    assert 'href="#finding-1">View requested finding</a>' in html
+    ids = set(re.findall(r'\bid="([^"]+)"', html))
+    assert all(fragment in ids for fragment in re.findall(r'href="#([^"]+)"', html))
+    assert result == before
 
 
 def test_customer_header_hides_internal_metadata_without_changing_legacy_header():

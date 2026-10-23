@@ -40,6 +40,44 @@ findings must agree; execution timestamps and durations can differ.
 
 ## Step 1: Ask scope (optional)
 
+### Focused Workday litmus request
+
+If the maker requests `WD-RUN-001`, `/flightcheck WD-RUN-001`,
+`/flightcheck wd litmus test`, or the Workday litmus test by name, skip the
+scope picker and runtime-probe consent. Resolve the same exact selected DA
+and run the existing checkpoint command, not the Workday scope or full suite:
+
+```powershell
+python scripts/flightcheck/cli.py --checkpoint WD-RUN-001 --agent-slug {AGENT_SLUG} --invocation-source adk --select-targets never --output workspace/flightcheck/workday-litmus
+```
+
+The separate folder preserves the full-suite report. Let the CLI open its
+report once; do not open another browser tab. Its focused HTML shows only the
+requested finding, while necessary prerequisite results remain in technical
+details and the original JSON. Present any prerequisite blocker rather than
+hiding it. Keep the same selected target for subsequent reruns.
+
+For a DA litmus Manual finding, display the recorded
+`evidence.manualVerificationSteps` in order and
+`evidence.ifMissingOrIncorrect` as the exception guidance. These are the
+code-defined customer instructions from `checks/da_validation.py`, shared with
+the report. Preserve their wording, selected agent/environment names, sample
+question and rerun instruction; do not generate or paraphrase another procedure.
+Keep the Copilot Studio Test-pane question separate from the VS Code rerun.
+Wait for the answer/completion before rerunning this checkpoint. Do not
+automatically trigger a flow, enable scenarios, collect employee answers or
+ask the maker to repeat prompts when history access is denied. If a run is
+in progress, wait; if a confirmed failure is reported, follow that failure's
+remediation first. Rerun only when the maker requests it or confirms completion.
+
+At least one recent scoreable agent-facing success satisfies this passive
+litmus; a top-level flow Succeeded is not enough and mixed failures remain
+visible. It does not prove the maker's specific prompt, every scenario or
+published employee success. Do not invoke the legacy Step 3d loop for a
+diagnostic-only DA result. Other named-check aliases are not introduced here.
+
+### Scope selection
+
 Use `vscode_askQuestions`:
 
 ```json
@@ -187,8 +225,10 @@ chat (it is a non-interactive subprocess), so **you own the consent question**.
 
 **WD-RUN-001** (the Workday run-health check) is **passive-only** and does **not**
 use this probe: it grades a real, recent end-to-end Workday run from run history
-and never writes to the tenant. If no fresh run exists it returns a guided
-NOT_CONFIGURED — see the **WD-RUN-001 user-assisted run** loop in Step 3. So this
+and never writes to the tenant. Selected-DA diagnostics return **Manual** when
+no scoreable recent response is available; use the focused Workday litmus
+instructions above. Only legacy results use **NotConfigured** and the
+**WD-RUN-001 user-assisted run** loop in Step 3. So this
 gate is about INFRA-003 only.
 
 **This gate applies only when INFRA-003 runs its mutating probe: scope `full`.**

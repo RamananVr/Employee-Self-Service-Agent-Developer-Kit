@@ -114,8 +114,8 @@ def _category(row):
     return {
         "Native Agent": "Agent", "Agent setup": "Agent", "Agent configuration": "Agent",
         "Workday DA": "Workday", "Workday Extension": "Workday",
-        "Local authored files": "Agent source files",
-        "Local Files": "Agent source files", "Local files": "Agent source files",
+        "Local authored files": "Agent",
+        "Local Files": "Agent", "Local files": "Agent", "Agent source files": "Agent",
     }.get(row.category, row.category)
 
 
@@ -174,7 +174,7 @@ def _render_finding(row, index):
     )
 
 
-def _render_technical_details(row, index):
+def _render_technical_details(row, index, *, supporting_target=None):
     evidence = {
         key: value for key, value in row.evidence.items()
         if key not in {
@@ -194,17 +194,40 @@ def _render_technical_details(row, index):
         f'<summary><code class="check-id">{escape(row.checkpoint_id)}</code> '
         f'<strong>{escape(_TITLES.get(row.checkpoint_id, row.description))}</strong> '
         f'<span class="pill {_PILLS.get(row.status, "na")}">{escape(row.status.replace("NotConfigured", "Not configured"))}</span></summary>'
+        + (f'<p><b>Supporting validation:</b> {_prose(row.result)}</p>'
+           + (f'<p>{_prose(row.remediation)}</p>' if row.remediation else "") if supporting_target else "")
         + (f'<pre>{escape(_mask_sensitive(json.dumps(evidence, indent=2)))}</pre>' if evidence else
            '<p>No additional technical observations are recorded beyond the finding and guidance above.</p>')
-        + f'<p><a href="#finding-{index}">View finding and guidance for {escape(row.checkpoint_id)}</a></p>'
-        '</details>'
+        + (f'<p><a href="#{supporting_target}">View requested finding</a></p>' if supporting_target else
+           f'<p><a href="#finding-{index}">View finding and guidance for {escape(row.checkpoint_id)}</a></p>')
+        + '</details>'
     )
 
 
 def render_maker_report(result: RunResult) -> str:
     from .runner import maker_diagnostic_outcome
 
-    counts = Counter(_kind(row) for row in result.results)
+    requested = result.coverage.get("requested", []) if result.scope == "checkpoint" else []
+    selected = set()
+
+    def include(key):
+        replacements = result.coverage.get("aliases", {}).get(key)
+        if replacements:
+            for replacement in replacements:
+                include(replacement)
+        else:
+            selected.add(key)
+
+    for key in requested:
+        include(key)
+    visible = [
+        (index, row) for index, row in enumerate(result.results)
+        if not requested or row.checkpoint_id in selected
+    ]
+    if requested and not visible:
+        raise ValueError("The requested FlightCheck has no recorded result to display.")
+    supporting = {index for index, row in enumerate(result.results) if requested and row.checkpoint_id not in selected}
+    counts = Counter(_kind(row) for _, row in visible)
     outcome = maker_diagnostic_outcome(result)
     title = {
         "ISSUES_FOUND": "Setup issues found",
@@ -222,7 +245,7 @@ def render_maker_report(result: RunResult) -> str:
     ) + '</div>'
     categories = {}
     actions, findings = [], {}
-    for index, row in enumerate(result.results):
+    for index, row in visible:
         kind = _kind(row)
         category = _category(row)
         categories.setdefault(category, []).append(row)
@@ -280,6 +303,9 @@ def render_maker_report(result: RunResult) -> str:
         '<li><b>Check details:</b> results are visible without expanding a check. Findings needing attention also show the responsible person and next steps.</li>'
         '<li><b>After changes:</b> rerun relevant checks after configuration changes.</li></ul>'
         + ('<p>This run checked local files only; it did not inspect deployed settings.</p>' if result.scope == "local" else "")
+        + (f'<p>This focused report shows {len(visible)} requested finding(s). '
+           f'{len(supporting)} supporting validation(s) remain in the technical details and original JSON; '
+           'header execution totals include those validations.</p>' if requested else "")
         + '</section>'
     )
     verdict_class = {"red": "verdict-not-ready", "amber": "verdict-warnings", "green": "verdict-ready"}[color]
@@ -304,7 +330,7 @@ def render_maker_report(result: RunResult) -> str:
         '<span class="hint">Select any category to inspect its recorded findings.</span></div>'
         f'{ledger}'
         f'<div class="syn-grid">{"".join(tiles)}</div></section>'
-        '<section class="checks-card"><h2>Check details</h2><div class="filters maker-filters" hidden>'
+        '<section class="checks-card" id="check-details"><h2>Check details</h2><div class="filters maker-filters" hidden>'
         f'{filters}<label>Search <input id="search" type="search"></label></div>'
         f'{"".join(sections)}<p id="no-match" hidden>No matching checks.</p></section>'
         '<section class="checks-card category manual-verification" id="manual-verification"><h2>Manual verification</h2>'
@@ -320,7 +346,12 @@ def render_maker_report(result: RunResult) -> str:
         '<div class="technical-search-controls" hidden><label for="technical-search">Search technical details by FlightCheck ID</label>'
         '<input id="technical-search" type="search" placeholder="e.g. WD-CONN-001" autocomplete="off">'
         '<p id="technical-match-count" class="advisory" role="status"></p></div>'
-        + "".join(_render_technical_details(row, index) for index, row in enumerate(result.results))
+        + "".join(
+            _render_technical_details(
+                row, index, supporting_target=f"finding-{visible[0][0]}" if index in supporting else None,
+            )
+            for index, row in enumerate(result.results)
+        )
         + '<p id="no-technical-match" hidden>No matching FlightCheck IDs.</p></section>'
         '<footer><a href="results.json">Download original check results</a></footer>'
         f'</main><script>{_SCRIPT}</script></body></html>'
