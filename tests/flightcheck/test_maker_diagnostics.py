@@ -881,6 +881,25 @@ def test_technical_appendix_preserves_observations_without_repeating_manual_meta
     assert "Setup documentation" in finding
 
 
+@pytest.mark.parametrize("category", ["Local authored files", "Local Files", "Local files"])
+def test_source_file_category_names_the_agent_workspace_without_changing_recorded_category(category):
+    from flightcheck.runner import _generate_html_report
+
+    row = CheckResult("CONFIG-007", category, "High", "Passed", "Agent instructions", "Instructions present.")
+    runner = FlightCheckRunner(scope="full")
+    runner.register(category, lambda _: [row])
+    result = runner.run()
+    result.diagnostic_only = True
+    before = deepcopy(result)
+    html = _generate_html_report(result)
+    assert '<div class="syn-name">Agent source files</div>' in html
+    assert 'href="#cat-agent-source-files"' in html
+    assert 'id="cat-agent-source-files"' in html
+    assert f'<div class="syn-name">{category}</div>' not in html
+    assert result == before
+    assert row.category == category
+
+
 def test_customer_header_hides_internal_metadata_without_changing_legacy_header():
     runner = FlightCheckRunner(scope="full")
     result = runner.run()

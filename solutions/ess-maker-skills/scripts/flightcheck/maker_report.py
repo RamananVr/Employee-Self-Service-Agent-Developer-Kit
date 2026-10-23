@@ -114,7 +114,8 @@ def _category(row):
     return {
         "Native Agent": "Agent", "Agent setup": "Agent", "Agent configuration": "Agent",
         "Workday DA": "Workday", "Workday Extension": "Workday",
-        "Local authored files": "Local files",
+        "Local authored files": "Agent source files",
+        "Local Files": "Agent source files", "Local files": "Agent source files",
     }.get(row.category, row.category)
 
 

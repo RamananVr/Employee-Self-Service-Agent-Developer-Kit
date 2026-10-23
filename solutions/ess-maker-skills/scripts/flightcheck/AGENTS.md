@@ -25,8 +25,10 @@ setup without a native bot ID and explicit legacy routes remain compatible.
 Local evidence never
 proves deployed freshness; portal suggestions never become Passed checks.
 Customer reports consolidate internal module labels (for example, all Workday
-checks use one Workday group). Applicable portal-only checks belong in the
-single Manual verification section with their ID, purpose, owner, detailed
+checks use one Workday group). Label selected-agent local content as
+Agent source files, not generic Local files; preserve raw recorded categories.
+Applicable portal-only checks belong in the single Manual verification section
+with their ID, purpose, owner, detailed
 steps and missing-setting guidance; they do not require an approval form.
 Use always-visible single-column test cases with inline purpose/result/owner/
 next-step labels. Keep the colored status totals without a duplicate totals
