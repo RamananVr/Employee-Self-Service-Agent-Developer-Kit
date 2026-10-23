@@ -784,6 +784,7 @@ _REPORT_CSS = """
     --manual:#424242; --manual-bg:#f0f0f0; --manual-line:#d1d1d1;
     --na:#616161; --na-bg:#f5f5f5; --na-line:#e0e0e0;
     --accent:#0f6cbd; --accent-ink:#ffffff;
+    --custom-tag-border:#8764b8;
     --code-bg:#242424; --code-ink:#f2f2f2;
     --chip:#f0f0f0; --shadow:0 2px 4px rgba(0,0,0,.14),0 0 2px rgba(0,0,0,.12);
     --radius:4px;
@@ -801,6 +802,7 @@ _REPORT_CSS = """
       --manual:#d6d6d6; --manual-bg:#333333; --manual-line:#525252;
       --na:#adadad; --na-bg:#1f1f1f; --na-line:#3d3d3d;
       --accent:#479ef5; --accent-ink:#0a0a0a;
+      --custom-tag-border:#b4a0ff;
       --code-bg:#0f0f0f; --code-ink:#e6e6e6;
       --chip:#333333;
       --ink-2:#d6d6d6; --verdict:#e0808a; --pill-warn:#f7630c;
@@ -930,7 +932,7 @@ _REPORT_CSS = """
   .check-title{font-family:'Segoe UI',system-ui,sans-serif;font-size:16px;line-height:22px;font-weight:600;flex:1 1 auto;min-width:0}
   .check-title .id{font-weight:600;color:var(--muted);font-size:12.5px;font-family:ui-monospace,monospace;margin-inline-start:6px}
   .custom-tags{display:flex;flex-wrap:wrap;gap:6px;list-style:none;padding:0;margin:8px 0 0;min-width:0}
-  .custom-tag{font-size:12px;line-height:18px;font-weight:400;color:var(--muted);border:1px solid var(--line);border-radius:4px;padding:2px 8px;min-width:0;overflow-wrap:anywhere}
+  .custom-tag{font-size:12px;line-height:18px;font-weight:400;color:var(--muted);border:1px solid var(--custom-tag-border);border-radius:4px;padding:2px 8px;min-width:0;overflow-wrap:anywhere}
   .ch-main>.custom-tags{flex-basis:100%}
   .role{flex:0 0 100%;font-family:'Segoe UI',system-ui,sans-serif;font-size:14px;line-height:20px;color:var(--ink);font-weight:600;margin-top:4px;white-space:nowrap}
   .role::before{content:"Assigned to: "}
