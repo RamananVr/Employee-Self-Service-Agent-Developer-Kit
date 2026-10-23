@@ -916,12 +916,19 @@ def test_simple_tabs_preserve_recorded_status_and_optional_dispositions(status, 
     row = CheckResult(
         "CHECK-001", "Agent", "High", status, "Check purpose", "Recorded finding.",
         remediation="Inspect the intended configuration.", roles=["ESS Maker / Agent Developer"],
+        custom_tags=["Customer alias"],
         evidence={**evidence, "ifMissingOrIncorrect": "Repair only confirmed defects."},
     )
     original = deepcopy(row)
     html = _render_finding(row, 0)
     assert f'data-filter-group="{group}"' in html
     assert f'data-recorded-status="{status}"' in html
+    left, right = html.split('<div class="finding-status">', 1)
+    assert '<code class="check-id">CHECK-001</code><strong>Check purpose</strong></h3>' in left
+    assert 'class="custom-tags"' not in left
+    status_column = right.split('</div></div><div class="finding-body">', 1)[0]
+    assert re.search(r'<span class="pill [^"]+">[^<]+</span><ul class="custom-tags"', status_column)
+    assert '<li class="custom-tag">Customer alias</li>' in status_column
     assert row.status == status
     if group == "passed":
         assert "Who should check or fix this:" not in html

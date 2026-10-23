@@ -158,9 +158,10 @@ def _render_finding(row, index):
         f'<div class="finding-heading"><h3 class="finding-label" id="finding-{index}-title">'
         f'<code class="check-id">{escape(row.checkpoint_id)}</code>'
         f'<strong>{escape(_TITLES.get(row.checkpoint_id, row.description))}</strong></h3>'
-        f'<span class="pill {_PILLS.get(row.status, "na")}">{escape(row.status.replace("NotConfigured", "Not configured"))}</span></div>'
+        f'<div class="finding-status"><span class="pill {_PILLS.get(row.status, "na")}">'
+        f'{escape(row.status.replace("NotConfigured", "Not configured"))}</span>'
         + _render_custom_tags(row.custom_tags)
-        + '<div class="finding-body">'
+        + '</div></div><div class="finding-body">'
         f'<p class="finding-purpose"><b>What this checks:</b> {_prose(purpose)}</p>'
         f'<p><b>Result:</b> {_prose(row.result)}</p>'
         + attention_html
@@ -340,8 +341,11 @@ _CSS = """
 .sec-body{display:block}
 .finding{min-width:0;padding:12px;border:1px solid var(--line);border-radius:4px}
 .finding+.finding{margin-top:12px}
-.finding-heading{display:flex;align-items:start;gap:6px 10px}
-.finding-label{display:flex;flex:1;flex-wrap:wrap;gap:3px 8px;min-width:0;margin:0}
+.finding-heading{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,35%);align-items:start;gap:10px}
+.finding-label{display:flex;flex-direction:column;gap:4px;min-width:0;margin:0}
+.finding-status{display:flex;flex-direction:column;align-items:flex-end;gap:8px;min-width:0}
+.finding-status .custom-tags{justify-content:flex-end;margin:0}
+.finding-status .custom-tag{text-align:right}
 .check-id{font-size:12px;font-weight:400;color:var(--muted)}.finding-label strong{font-size:14px}
 .finding-purpose{color:var(--muted)}
 .finding-body{display:block}.finding-body p{font-size:13px;margin:10px 0 0}
@@ -353,7 +357,7 @@ _CSS = """
 .technical-search-controls input{display:block;box-sizing:border-box;width:100%;max-width:360px;padding:8px;margin-top:6px}
 .finding-summary{font-size:13px;font-weight:400;margin:6px 0 0}
 .finding p{overflow-wrap:anywhere}
-.finding-heading .pill{flex-shrink:0}.finding-purpose,.finding-label{overflow-wrap:anywhere}
+.finding-status .pill{align-self:flex-end;max-width:100%;white-space:normal;overflow-wrap:anywhere}.finding-purpose,.finding-label{overflow-wrap:anywhere}
 .maker-filters{display:flex;gap:8px;flex-wrap:wrap;padding:12px 0}
 .maker-filters button[aria-pressed=true]{font-weight:600;color:var(--accent);border-bottom-color:var(--accent)}
 .maker-filters input{max-width:100%}[hidden]{display:none!important}

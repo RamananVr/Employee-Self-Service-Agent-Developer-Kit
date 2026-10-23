@@ -30,7 +30,9 @@ single Manual verification section with their ID, purpose, owner, detailed
 steps and missing-setting guidance; they do not require an approval form.
 Use always-visible single-column test cases with inline purpose/result/owner/
 next-step labels. Keep the colored status totals without a duplicate totals
-table. Put technical observations in a bottom appendix with independent
+table. Finding headers have two columns: ID above title on the left, status
+above purple-bordered custom tags on the right. Keep the detailed finding body
+single-column. Put technical observations in a bottom appendix with independent
 FlightCheck-ID search and bidirectional finding links. Do not repeat visible
 Manual instructions or common scope metadata there; keep the full original JSON
 unchanged and retain distinct observations, read limitations and errors.
