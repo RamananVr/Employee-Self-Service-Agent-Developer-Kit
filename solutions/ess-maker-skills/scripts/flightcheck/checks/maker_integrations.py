@@ -6,7 +6,7 @@
 from dataclasses import asdict
 
 from ._connection_dependencies import (
-    READ_ERRORS, _Access, _connector, _dependencies, _direct_references, _mapping, _nodes, _sap_only_topic,
+    READ_ERRORS, ConnectionAudit, _Access, _connector, _dependencies, _direct_references, _mapping, _nodes, _sap_only_topic,
 )
 from .workday_da import reviewed_workday_topic_schemas
 from ..runner import CheckResult, Priority, Role, Status
@@ -31,11 +31,14 @@ def run_optional_integration_checks(runner, *, workday_configured=False):
         return []
     payload = snapshot["changeset"]
     limitations = []
+    active_limitations = []
+    inactive_audit = ConnectionAudit()
     try:
         direct = _direct_references(payload)
     except ValueError as exc:
         direct = {}
         limitations.append(str(exc))
+        active_limitations.append(str(exc))
     schema = payload["bot"]["schemaName"]
     expected = {value.casefold() for value in reviewed_workday_topic_schemas(schema)}
     flows = getattr(runner, "_maker_flow_details", {})
@@ -47,6 +50,8 @@ def run_optional_integration_checks(runner, *, workday_configured=False):
         component = change["component"]
         if component["$kind"] != "DialogComponent" or _sap_only_topic(component, payload):
             continue
+        topic_limitations = []
+        flow_audit = inactive_audit if component.get("status") == "Inactive" else audit
         connectors = set()
         if str(component.get("schemaName") or "").casefold() in expected:
             connectors.add(CONNECTORS["Workday"])
@@ -54,7 +59,7 @@ def run_optional_integration_checks(runner, *, workday_configured=False):
             if node.get("$kind") == "InvokeConnectorAction":
                 reference = direct.get(str(node.get("connectionReference") or "").casefold())
                 if reference is None:
-                    limitations.append("A conversation has an unresolved connector reference.")
+                    topic_limitations.append("A conversation has an unresolved connector reference.")
                 else:
                     connectors.add(_connector(reference["connectorId"]))
             elif node.get("$kind") == "InvokeFlowAction":
@@ -62,7 +67,7 @@ def run_optional_integration_checks(runner, *, workday_configured=False):
                 # a copy's status here never changes or proves actual activation.
                 candidate = {**component, "status": "Active"}
                 _, ids, errors = _dependencies({"botComponentChanges": [{"component": candidate}]})
-                limitations.extend(errors)
+                topic_limitations.extend(errors)
                 for flow_id in ids:
                     if flow_id not in flows:
                         try:
@@ -71,18 +76,18 @@ def run_optional_integration_checks(runner, *, workday_configured=False):
                                 "Integration flow detail",
                             )
                         except READ_ERRORS as exc:
-                            audit.record_read_error(exc, f"Flow {flow_id}: integration discovery")
+                            flow_audit.record_read_error(exc, f"Flow {flow_id}: integration discovery")
                             flows[flow_id] = exc
                     flow = flows[flow_id]
                     properties = flow.get("properties") if isinstance(flow, dict) else None
                     references = properties.get("connectionReferences") if isinstance(properties, dict) else None
                     if not isinstance(references, dict):
                         if not isinstance(flow, BaseException):
-                            audit.record_read_error(
+                            flow_audit.record_read_error(
                                 ValueError("Flow detail omitted the supported connector-reference inventory."),
                                 f"Flow {flow_id}: integration discovery",
                             )
-                        limitations.append(f"Flow {flow_id}: integration could not be determined.")
+                        topic_limitations.append(f"Flow {flow_id}: integration could not be determined.")
                         continue
                     for ref in references.values():
                         api = ref.get("apiDefinition") if isinstance(ref, dict) else None
@@ -90,7 +95,7 @@ def run_optional_integration_checks(runner, *, workday_configured=False):
                         if isinstance(connector_id, str) and connector_id:
                             connectors.add(_connector(connector_id))
                         else:
-                            limitations.append(f"Flow {flow_id}: connector identity is unavailable.")
+                            topic_limitations.append(f"Flow {flow_id}: connector identity is unavailable.")
         for name, connector in connectors_in_scope.items():
             if connector in connectors:
                 related[name].append({
@@ -98,7 +103,10 @@ def run_optional_integration_checks(runner, *, workday_configured=False):
                     "activation": component.get("status", "unknown"),
                 })
         if component.get("status") not in {"Active", "Inactive"} and connectors != {"shared_sapodata"}:
-            limitations.append("A conversation's activation is unknown.")
+            topic_limitations.append("A conversation's activation is unknown.")
+        limitations.extend(topic_limitations)
+        if component.get("status") != "Inactive":
+            active_limitations.extend(topic_limitations)
 
     rows, states = [], {}
     for name, connector in connectors_in_scope.items():
@@ -106,7 +114,7 @@ def run_optional_integration_checks(runner, *, workday_configured=False):
         topics = related[name]
         declared = [item for item in direct.values() if _connector(item["connectorId"]) == connector]
         enabled = connector in audit.discovered_connectors or any(t["activation"] == "Active" for t in topics)
-        uncertain = bool(limitations or audit.blocked or audit.warnings)
+        uncertain = bool(limitations or audit.blocked or audit.warnings or audit.read_limitations)
         state = (
             "enabled" if enabled else "unknown" if uncertain else
             "disabled" if topics and all(t["activation"] == "Inactive" for t in topics) else
@@ -118,6 +126,7 @@ def run_optional_integration_checks(runner, *, workday_configured=False):
                 [*limitations, *audit.warnings, *([audit.blocked] if audit.blocked else [])]
             )),
             "evidenceBoundary": "selected_agent_configuration_not_employee_execution",
+            "inventoryReadLimitations": inactive_audit.read_limitations,
         }
         states[name] = evidence
         finding = {
@@ -142,13 +151,18 @@ def run_optional_integration_checks(runner, *, workday_configured=False):
         )
         # Connector/binding mismatches are diagnosed by the shared exact audit.
         # Never report this subset healthy when its inventory was inconclusive.
-        status = Status.FAILED.value if failed else Status.BLOCKED.value if uncertain or not references else Status.PASSED.value
+        binding_uncertain = bool(active_limitations or audit.blocked or audit.warnings or audit.read_limitations)
+        status = Status.FAILED.value if failed else Status.BLOCKED.value if binding_uncertain or not references else Status.PASSED.value
         rows.append(_result(
             f"{prefix}-CONN-001", name, status, f"{name} connection bindings",
             f"{len(references)} required {name} reference(s) inspected. "
             + ("Exact bindings were verified; employee authentication was not tested." if status == Status.PASSED.value else
                "See the exact dependency findings; these bindings are not verified healthy."),
-            evidence={"references": [asdict(ref) for ref in references], "dependencyCoverageComplete": not uncertain},
+            evidence={
+                "references": [asdict(ref) for ref in references],
+                "dependencyCoverageComplete": not binding_uncertain,
+                "inactiveInventoryReadLimitations": inactive_audit.read_limitations,
+            },
             remediation="" if status == Status.PASSED.value else "Repair the identified binding or resolve its read-access limitation in Connection Settings.",
         ))
         relevant_flows = {flow_id for ref in references for flow_id in ref.flow_ids}

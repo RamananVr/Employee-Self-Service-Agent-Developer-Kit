@@ -483,6 +483,7 @@ def _workday_references(runner, spec):
     from ..maker_diagnostics import _check_connections
 
     runner.da_executor.group("connections", _check_connections)
+    audit = runner._da_connection_audit
     env_url, token = _Access(runner).dataverse()
     names = {
         ref.logical_name for ref in runner._da_connection_audit.references
@@ -506,11 +507,23 @@ def _workday_references(runner, spec):
     missing = sorted(name for name in names if name.casefold() not in index)
     unbound = sorted(name for name in names if name.casefold() in index and not index[name.casefold()].get("connectionid"))
     mismatched = [name for name, row in index.items() if _connector(row["connectorid"]) != "shared_workdaysoap"]
+    incomplete = bool(audit.blocked or audit.warnings or audit.read_limitations)
+    status = (
+        "Failed" if missing or unbound or mismatched else
+        "Error" if any(item["kind"] == "error" for item in audit.read_limitations) else
+        "Manual" if incomplete else "Passed"
+    )
     return result_for(
-        spec, "Failed" if missing or unbound or mismatched else "Passed",
+        spec, status,
         f"Required runtime-package and selected Workday reference bindings: missing={missing}; unbound={unbound}; wrong connector={mismatched}. "
-        "Unused environment-wide ISU or sibling-agent references were not treated as this DA's requirements.",
-        evidence={"requiredLogicalNames": sorted(names), "missing": missing, "unbound": unbound},
+        "Unused environment-wide ISU or sibling-agent references were not treated as this DA's requirements."
+        + (" Dependency discovery was incomplete; the inspected subset does not prove complete bindings." if incomplete else ""),
+        evidence={
+            "requiredLogicalNames": sorted(names), "missing": missing, "unbound": unbound,
+            "dependencyCoverageComplete": not incomplete,
+            "readLimitations": audit.read_limitations,
+            "verificationLimitations": [*audit.warnings, *([audit.blocked] if audit.blocked else [])],
+        },
     )
 
 
@@ -694,15 +707,18 @@ def run_registered_da_check(runner):
                         evidence={"applicability": "not_applicable"},
                     )]
                 if state.get("applicability") == "unknown":
-                    if any(item["kind"] == "error" for item in audit.read_limitations):
+                    limitations = [*audit.read_limitations, *state.get("inventoryReadLimitations", [])]
+                    if any(item["kind"] == "error" for item in limitations):
                         return [result_for(
                             spec, "Error", "The selected integration discovery encountered a service/response error.",
-                            evidence={"readLimitations": audit.read_limitations},
+                            evidence={"readLimitations": limitations},
                         )]
                     return [manual_result(runner, spec, "The selected integration's applicability was not established by the returned inventory.")]
-            if matching is not None and matching.status == "Blocked" and audit.read_limitations:
-                status = "Error" if any(item["kind"] == "error" for item in audit.read_limitations) else "Manual"
-                return [replace(matching, status=status, evidence={**matching.evidence, "readLimitations": audit.read_limitations})]
+            if matching is not None and matching.status == "Blocked":
+                limitations = [*audit.read_limitations, *matching.evidence.get("inventoryReadLimitations", [])]
+                if limitations:
+                    status = "Error" if any(item["kind"] == "error" for item in limitations) else "Manual"
+                    return [replace(matching, status=status, evidence={**matching.evidence, "readLimitations": limitations})]
         if strategy == "environment":
             rows = [
                 replace(row, checkpoint_id="DA-ENV-LINK-001" if row.checkpoint_id == "ENV-002" else row.checkpoint_id)

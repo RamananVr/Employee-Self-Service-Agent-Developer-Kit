@@ -20,7 +20,7 @@ class DAConfigurationError(ValueError):
     """A supported read demonstrated missing required configuration."""
 
 
-def plan_da_checks(*, checkpoint=None, profile=None, local=False):
+def plan_da_checks(*, checkpoint=None, profile=None, local=False, scope=None):
     from .da_checks import validate_da_definitions
     from .registry import REGISTRY, resolve_profile
 
@@ -33,9 +33,15 @@ def plan_da_checks(*, checkpoint=None, profile=None, local=False):
             raise ValueError(f"Unknown FlightCheck profile: {profile}.")
         requested = definition.checkpoint_ids
     else:
+        features = {
+            "workday": {"workday", "workday_oob", "workday_custom"},
+            "servicenow": {"servicenow"},
+        }.get(scope)
+        integration_key = {"workday": "WD-INTEGRATION-001", "servicenow": "SN-INTEGRATION-001"}.get(scope)
         requested = tuple(
             key for key, spec in REGISTRY.items()
             if spec.da and spec.da.executable and (not local or spec.da.local)
+            and (features is None or spec.da.feature in features or key == integration_key)
         )
     planned: dict[str, CheckpointSpec] = {}
     visiting: set[str] = set()
@@ -141,10 +147,14 @@ def _applicability(runner, spec):
         value = state.get("applicability", "unknown")
         if value == "unknown":
             audit = getattr(runner, "_da_connection_audit", None)
-            if audit and any(item["kind"] == "error" for item in audit.read_limitations):
+            limitations = [
+                *(audit.read_limitations if audit else []),
+                *state.get("inventoryReadLimitations", []),
+            ]
+            if any(item["kind"] == "error" for item in limitations):
                 return result_for(
                     spec, "Error", f"{name} applicability discovery encountered a service/response error.",
-                    evidence={"readLimitations": audit.read_limitations},
+                    evidence={"readLimitations": limitations},
                 )
             return manual_result(
                 runner, spec, f"{name} applicability could not be established for this agent.",

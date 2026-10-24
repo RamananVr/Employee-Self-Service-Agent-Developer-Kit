@@ -30,7 +30,9 @@ resolved before continuing; never borrow a sibling's identity.
 
 For a native no-Dataverse agent, supported scopes are `full`, `environment`,
 `servicenow`, `workday`, `local`, and `infrastructure`.
-Scopes other than full/local retain their existing behavior.
+DA `workday` and `servicenow` use the same selected-agent diagnostic producers
+as full, restricted to the requested provider plus required prerequisites.
+Other narrow scopes retain their existing behavior.
 Honor the requested scope identically in the maker workspace and standalone
 command. Invocation source identifies the caller, not different check coverage
 or elevated permissions. With the same target, scope, permissions and evidence,
@@ -153,7 +155,7 @@ of them together and a healthy prod app could be masked by an unrelated
 sandbox app. This step lets the user pin the one they are verifying.
 
 **Only run this step for scopes that touch those integrations:**
-- DA full → **skip this step**; dependencies come from the exact selected
+- DA full, Workday, ServiceNow, or local-only → **skip this step**; dependencies come from the exact selected
   agent, not Graph SSO-app discovery or unrelated connection candidates
 - native no-Dataverse agent → **skip this step entirely**; connection checks
   use the exact active agent and never guess among physical candidates
@@ -304,7 +306,8 @@ python scripts/flightcheck/cli.py --scope {SCOPE} --invocation-source adk --sele
 
 Wait for the script to finish.
 
-`cli.py` automatically opens the HTML report (`workspace/flightcheck/report.html`)
+`cli.py` automatically opens `report.html` from the executed run's output
+directory (normally `workspace/flightcheck`)
 in the user's default browser when it finishes. **Do not open it yourself** — a
 second `webbrowser.open` / `Start-Process` would launch a duplicate tab pointing
 at the same file. If the report does not appear (Codespaces, headless box, or
@@ -314,6 +317,13 @@ explorer rather than spawning another tab from this skill.
 ---
 
 ## Step 3: Read results and present findings
+
+Read `results.json` from the executed run's output directory and link
+`report.html` in that same directory. Use the command's `--output` value,
+or the CLI default `workspace/flightcheck` when omitted. The focused litmus
+command above uses `workspace/flightcheck/workday-litmus`; never substitute
+an older full-suite JSON or report. Call this directory `{OUTPUT_DIRECTORY}`
+in the presentation below.
 
 For a DA result with `diagnostic_only: true`, present the actual diagnostic
 outcome: setup checks passed, completed with notes, issues found, or some checks
@@ -334,7 +344,7 @@ this summary unless the maker explicitly requests a repair.
 
 For other results, retain the following legacy presentation:
 
-Read `workspace/flightcheck/results.json` and format the output below **yourself,
+Read `{OUTPUT_DIRECTORY}/results.json` and format the output below **yourself,
 directly in your chat reply**. You MUST follow this exact format every time. Do
 not improvise, add prose between sections, or skip any section.
 
@@ -363,7 +373,7 @@ Always show this first:
 | ℹ️ Not Configured | {not_configured} |
 | **Total** | **{total}** |
 
-*Completed in {duration_secs}s — [View full report](workspace/flightcheck/report.html)*
+*Completed in {duration_secs}s — [View full report]({OUTPUT_DIRECTORY}/report.html)*
 ```
 
 Where VERDICT_EMOJI and VERDICT_TEXT are:

@@ -235,7 +235,7 @@ class _Access:
         return self.pp
 
     def dataverse(self) -> tuple[str, str]:
-        env_url = str(getattr(self.runner, "env_url", "") or "").rstrip("/")
+        env_url = str(getattr(self.runner, "env_url", "") or "").strip().rstrip("/")
         token = getattr(self.runner, "dv_token", None)
         cached = getattr(self.runner, "_da_dependency_dataverse", None)
         if self.token_provider and cached:
@@ -256,9 +256,14 @@ class _Access:
             properties = _mapping(environment.get("properties"), "Environment properties")
             metadata = _mapping(properties.get("linkedEnvironmentMetadata"), "Linked environment metadata")
             server_url = _identity(metadata.get("instanceUrl"), "Dataverse URL").rstrip("/")
-            if env_url and env_url.casefold() != server_url.casefold():
+            verified_urls = {
+                value.strip().rstrip("/").casefold()
+                for field_name in ("instanceUrl", "instanceApiUrl")
+                if isinstance(value := metadata.get(field_name), str) and value.strip()
+            }
+            if env_url and env_url.casefold() not in verified_urls:
                 raise ValueError("The Dataverse URL belongs to a different Power Platform environment.")
-            env_url = server_url
+            env_url = env_url or server_url
             parsed = urlparse(env_url)
             if (parsed.scheme != "https" or not parsed.hostname or parsed.path
                     or parsed.query or parsed.fragment or parsed.username

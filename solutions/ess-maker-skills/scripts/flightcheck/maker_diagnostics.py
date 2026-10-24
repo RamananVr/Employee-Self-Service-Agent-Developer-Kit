@@ -315,13 +315,18 @@ def _check_workday(runner):
     try:
         if runner.should_execute("DV-CONN-001"):
             rows.extend(_check_dv_connection(runner))
-    except (ValueError, RuntimeError, requests.RequestException) as exc:
-        if getattr(runner, "da_strict_errors", False):
-            raise
+    except (ValueError, RuntimeError, PermissionError, requests.RequestException) as exc:
+        response = getattr(exc, "response", None)
+        code = 403 if isinstance(exc, PermissionError) else (
+            response.status_code if response is not None else None
+        )
+        strict = getattr(runner, "da_strict_errors", False)
         rows.append(_result(
-            "DV-CONN-001", "Blocked", "Workday runtime Dataverse reference",
+            "DV-CONN-001", ("Manual" if code == 403 else "Error") if strict else "Blocked",
+            "Workday runtime Dataverse reference",
             f"The runtime reference could not be inspected: {type(exc).__name__}: {exc}",
             "Ask the environment owner to verify read access to connection references, then rerun.",
+            evidence={"httpStatus": code, "readLimitation": type(exc).__name__},
         ))
     if not runner.should_execute("WD-REST-002"):
         return rows
@@ -372,7 +377,7 @@ def run_maker_diagnostics(args, config) -> RunResult:
 
     checkpoint, profile = getattr(args, "checkpoint", None), getattr(args, "profile", None)
     scope = "checkpoint" if checkpoint else "profile" if profile else getattr(args, "scope", "full")
-    if scope not in {"full", "local", "checkpoint", "profile"}:
+    if scope not in {"full", "local", "workday", "servicenow", "checkpoint", "profile"}:
         raise ValueError(f"Unsupported DA maker diagnostic scope: {scope!r}.")
     runner = FlightCheckRunner(scope=scope)
     runner.config = config
@@ -403,12 +408,12 @@ def run_maker_diagnostics(args, config) -> RunResult:
             command.append("--no-telemetry")
         runner.rerun_command = subprocess.list2cmdline(command)
     requested, specs, aliases = plan_da_checks(
-        checkpoint=checkpoint, profile=profile, local=scope == "local",
+        checkpoint=checkpoint, profile=profile, local=scope == "local", scope=scope,
     )
     runner.da_explicit_selection = bool(checkpoint or profile)
     wanted = frozenset(spec.key for spec in specs)
     runner._target_matcher = wanted.__contains__
-    if runner.da_explicit_selection:
+    if runner.da_explicit_selection or scope in {"workday", "servicenow"}:
         from .registry import REGISTRY
 
         features = {REGISTRY[key].da.feature for key in requested if key in REGISTRY and REGISTRY[key].da} - {""}

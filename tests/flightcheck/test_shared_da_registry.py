@@ -8,6 +8,7 @@ import json
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 import responses
@@ -989,8 +990,9 @@ def test_workday_package_inspection_is_available_before_topics_are_activated(
 
 
 @pytest.mark.parametrize("provider", ["WD", "SN"])
+@pytest.mark.parametrize("selection", ["checkpoint", "scope"])
 def test_selective_integration_uses_real_mixed_dependency_capture_without_other_provider_binding_reads(
-    setup_workspace, monkeypatch, provider,
+    setup_workspace, monkeypatch, provider, selection,
 ):
     from flightcheck.checks import _connection_dependencies
     from urllib.parse import urlsplit
@@ -1028,7 +1030,10 @@ def test_selective_integration_uses_real_mixed_dependency_capture_without_other_
                 reference["properties"]["apiId"] = original["properties"]["apiId"].replace("shared_workdaysoap", "shared_service-now")
                 body["value"].append(reference)
             http.add(item["request"]["method"], uri, json=body)
-        result, code = _run_cli(ws, monkeypatch, http, ["--checkpoint", f"{provider}-CONN-001"])
+        options = ["--checkpoint", f"{provider}-CONN-001"] if selection == "checkpoint" else [
+            "--scope", "workday" if provider == "WD" else "servicenow",
+        ]
+        result, code = _run_cli(ws, monkeypatch, http, options)
         assert not any("graph.microsoft.com" in call.request.url for call in http.calls)
         if provider == "SN":
             assert not any("/connectionreferences" in call.request.url for call in http.calls)
@@ -1038,8 +1043,180 @@ def test_selective_integration_uses_real_mixed_dependency_capture_without_other_
     expected_connector = "shared_workdaysoap" if provider == "WD" else "shared_service-now"
     assert all(ref["connector_id"].endswith(expected_connector) for ref in row["evidence"]["references"])
     assert not row["remediation"]
-    assert code == 0
+    if selection == "checkpoint":
+        assert code == 0
     assert not any(row["checkpoint_id"].startswith("SN-" if provider == "WD" else "WD-") for row in result["results"])
+
+
+@pytest.mark.parametrize("http_status", [403, 503])
+@pytest.mark.parametrize("key,activation,unbound", [
+    ("WD-CONN-001", "Inactive", False),
+    ("WD-CONN-001", "Active", False),
+    ("WD-CONN-012", "Active", False),
+    ("WD-CONN-012", "Active", True),
+])
+def test_focused_bindings_separate_inactive_inventory_from_required_active_discovery(
+    setup_workspace, monkeypatch, http_status, key, activation, unbound,
+):
+    from flightcheck.checks import _connection_dependencies
+
+    ws = setup_workspace
+    interactions = _capture("env004_dependencies.yaml")
+    content = _body(interactions[1])
+    failing_flow = "00000000-0000-0000-0000-000000000015"
+    for change in content["botComponentChanges"]:
+        if failing_flow in json.dumps(change):
+            change["component"]["status"] = activation
+    ws.content["botComponentChanges"].extend(content["botComponentChanges"])
+    ws.content["connectionReferenceChanges"] = content["connectionReferenceChanges"]
+    environment = next(item for item in interactions if "api.bap.microsoft" in item["request"]["uri"])
+    captured_env = _body(environment)["name"]
+    monkeypatch.setattr(_connection_dependencies, "discover_tenant", lambda _: TENANT_ID)
+
+    def references(request):
+        query = parse_qs(urlsplit(request.url).query).get("$filter", [""])[0]
+        records = _body(next(item for item in interactions if "/connectionreferences" in item["request"]["uri"]))["value"]
+        if unbound:
+            next(row for row in records if row["connectionreferencelogicalname"] == "msdyn_sharedworkdaysoap_workdayruntime")["connectionid"] = None
+        return 200, {"Content-Type": "application/json"}, json.dumps({
+            "value": [row for row in records if "'" + row["connectionreferencelogicalname"] + "'" in query],
+        })
+
+    with responses.RequestsMock(assert_all_requests_are_fired=False) as http:
+        _register_native(http, ws)
+        for item in interactions:
+            uri = item["request"]["uri"]
+            if "minimalBots" in uri or "api.bap.microsoft" in uri:
+                continue
+            uri = urlsplit(uri.replace(captured_env, ws.config["environmentId"]))._replace(query="").geturl()
+            if "/connectionreferences" in uri:
+                http.add_callback("GET", uri, callback=references)
+            else:
+                http.add(
+                    item["request"]["method"], uri, json=_body(item),
+                    status=http_status if uri.endswith("/flows/" + failing_flow) else 200,
+                )
+        payload, code = _run_cli(ws, monkeypatch, http, ["--checkpoint", key])
+    row = _row(payload, key)
+    expected = "Failed" if unbound else "Passed" if activation == "Inactive" else "Manual" if http_status == 403 else "Error"
+    assert row["status"] == expected, row["result"]
+    assert row["evidence"]["dependencyCoverageComplete"] is (activation == "Inactive")
+    assert bool(row["remediation"]) is (expected != "Passed")
+    assert code == (expected != "Passed")
+    if activation == "Inactive":
+        inventory = row["evidence"]["inactiveInventoryReadLimitations"]
+        assert inventory[0]["kind"] == ("permission_denied" if http_status == 403 else "error")
+        assert "Exact bindings were verified" in row["result"]
+    elif key == "WD-CONN-012":
+        assert "discovery was incomplete" in row["result"]
+        assert row["evidence"]["readLimitations"][0]["kind"] == ("permission_denied" if http_status == 403 else "error")
+        assert not any(item["checkpoint_id"] == "ENV-004" for item in payload["results"])
+        if unbound:
+            assert row["evidence"]["unbound"] == ["msdyn_sharedworkdaysoap_workdayruntime"]
+
+
+@pytest.mark.parametrize("http_status", [403, 503])
+def test_workday_profile_keeps_confirmed_failures_when_late_reference_read_fails(
+    setup_workspace, monkeypatch, http_status,
+):
+    from flightcheck.checks import _connection_dependencies
+
+    require_validated_mock(dataverse_mock)
+    ws = setup_workspace
+    monkeypatch.setattr(_connection_dependencies, "discover_tenant", lambda _: TENANT_ID)
+    environment = _body(next(
+        item for item in _capture("flightcheck_pp_admin.yaml")
+        if "api.bap.microsoft.com" in item["request"]["uri"] and "/environments/" in item["request"]["uri"]
+    ))
+    env_url = environment["properties"]["linkedEnvironmentMetadata"]["instanceUrl"]
+    with responses.RequestsMock(assert_all_requests_are_fired=False) as http:
+        _register_native(http, ws)
+        for entity in ("solutions", "workflows", "connectionreferences"):
+            http.add(**dataverse_mock.query(
+                base_url=env_url, entity_set=entity, records=[],
+                status=http_status if entity == "connectionreferences" else 200,
+            ))
+        payload, code = _run_cli(ws, monkeypatch, http, [
+            "--profile", "workday-da:dataverse-ready", "--validation-realm", "dev",
+        ])
+    package = _row(payload, "WD-DA-PKG-001")
+    assert package["status"] == "Failed", package["result"]
+    assert "not installed" in package["result"]
+    assert "install" in package["remediation"].lower()
+    assert _row(payload, "WD-DA-FLOW-001")["status"] == "Failed"
+    reference = _row(payload, "DV-CONN-001")
+    assert reference["status"] == ("Manual" if http_status == 403 else "Error")
+    assert reference["evidence"]["httpStatus"] == (403 if http_status == 403 else None)
+    assert "could not be inspected" in reference["result"]
+    assert code == 1
+
+
+@pytest.mark.parametrize("endpoint", [
+    "web", "api", "api_upper", "unrelated", "path", "http", "userinfo", "query", "port",
+    "other_tenant", "other_subject",
+])
+def test_selected_dataverse_accepts_only_verified_web_or_api_roots(monkeypatch, endpoint):
+    from flightcheck.checks import _connection_dependencies
+
+    environment = _body(next(
+        item for item in _capture("flightcheck_pp_admin.yaml")
+        if "api.bap.microsoft.com" in item["request"]["uri"] and "/environments/" in item["request"]["uri"]
+    ))
+    metadata = environment["properties"]["linkedEnvironmentMetadata"]
+    web = metadata["instanceUrl"].rstrip("/")
+    api = web.replace(".crm.", ".api.crm.")
+    malformed = {
+        "path": api + "/other", "http": api.replace("https:", "http:"),
+        "userinfo": api.replace("https://", "https://user@"),
+        "query": api + "?other=1", "port": api + ":444",
+    }
+    metadata["instanceApiUrl"] = malformed.get(endpoint, api)
+    configured = (
+        web if endpoint == "web" else api.upper() + "/" if endpoint == "api_upper" else
+        "https://unrelated.crm.dynamics.com" if endpoint == "unrelated" else metadata["instanceApiUrl"]
+    )
+    requests = []
+    runner = SimpleNamespace(
+        env_id=environment["name"] if endpoint != "other_subject" else "other-environment",
+        env_url=configured, tenant_id=TENANT_ID, maker_diagnostics=True,
+        _maker_environment_snapshot=environment,
+        connection_dependency_token=lambda scope: requests.append(scope) or "read-token",
+    )
+    monkeypatch.setattr(
+        _connection_dependencies, "discover_tenant",
+        lambda _: "other-tenant" if endpoint == "other_tenant" else TENANT_ID,
+    )
+    if endpoint in {"web", "api", "api_upper"}:
+        first = _connection_dependencies._Access(runner).dataverse()
+        assert first[0].casefold() == (web if endpoint == "web" else api).casefold()
+        assert _connection_dependencies._Access(runner).dataverse() == first
+        assert requests == [first[0] + "/user_impersonation"]
+    else:
+        with pytest.raises(ValueError, match="different|verified Dataverse root"):
+            _connection_dependencies._Access(runner).dataverse()
+        assert not requests
+
+
+@pytest.mark.parametrize("scope,prefix", [("workday", "WD"), ("servicenow", "SN")])
+def test_da_provider_scopes_share_maker_and_standalone_planning_and_findings(
+    setup_workspace, monkeypatch, scope, prefix,
+):
+    ws = setup_workspace
+    findings = []
+    for source in ("adk", "cli"):
+        with responses.RequestsMock(assert_all_requests_are_fired=False) as http:
+            _register_native(http, ws)
+            payload, code = _run_cli(ws, monkeypatch, http, [
+                "--scope", scope, "--invocation-source", source, "--agent-slug", "hr",
+            ], output=source)
+            assert not any("graph.microsoft.com" in call.request.url or "/flows" in call.request.url for call in http.calls)
+        assert payload["diagnostic_only"] is True
+        assert payload["scope"] == scope
+        assert _row(payload, prefix + "-INTEGRATION-001")["evidence"]["applicability"] == "not_configured"
+        assert not any(row["checkpoint_id"].startswith("SN-" if prefix == "WD" else "WD-") for row in payload["results"])
+        assert code == 0
+        findings.append((payload["coverage"], payload["results"]))
+    assert findings[0] == findings[1]
 
 
 @pytest.mark.parametrize("grant_target,expected", [
@@ -1102,8 +1279,19 @@ def test_inactive_flow_discovery_retains_permission_vs_service_error(status, kin
         http.add("GET", uri, status=status, json={})
         rows = run_optional_integration_checks(runner)
     assert all(row.status == "Blocked" for row in rows)
-    assert runner._da_connection_audit.read_limitations[0]["kind"] == kind
-    assert flow_id in runner._da_connection_audit.read_limitations[0]["context"]
+    assert not runner._da_connection_audit.read_limitations
+    limitation = runner.maker_integrations["Workday"]["inventoryReadLimitations"][0]
+    assert limitation["kind"] == kind
+    assert flow_id in limitation["context"]
+    runner.agent_slug = "hr"
+    runner.da_explicit_selection = True
+    keys = ("WD-INTEGRATION-001", "WD-CONN-001")
+    executor = DAExecutor(runner, SimpleNamespace(), keys, tuple(registry.REGISTRY[key] for key in keys), {})
+    executor.groups["integrations"] = rows
+    runner.da_executor = executor
+    results = executor.run(runner)
+    assert all(row.status == ("Manual" if status == 403 else "Error") for row in results)
+    assert all(row.remediation for row in results)
 
 
 @pytest.mark.parametrize("mode,expected", [

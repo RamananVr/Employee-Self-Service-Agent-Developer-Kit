@@ -499,8 +499,11 @@ agent icon, or asks what any landing-page setting controls for employees. Do
 not call an AgentConfiguration MCP tool from a generic flow.
 
 **FlightCheck results rendering:** When presenting `/flightcheck` results (Step 3
-of `src/skills/flightcheck/SKILL.md`), read `workspace/flightcheck/results.json`
-with your file-reading tool and format the summary banner and tables **yourself,
+of `src/skills/flightcheck/SKILL.md`), read `results.json` from the executed run's
+output directory (`--output`, or the CLI default when omitted), and link
+`report.html` from that same directory. For the focused Workday litmus run,
+use `workspace/flightcheck/workday-litmus`, not the previous full-suite folder.
+Use your file-reading tool and format the summary banner and tables **yourself,
 directly in the chat reply**. Do NOT write or execute any script (`.py`, `.js`,
 `.ps1`, shell one-liner, etc.) to parse the JSON, build the tables, or print the
 summary. Generating a helper script here is a bug — it leaks raw terminal output

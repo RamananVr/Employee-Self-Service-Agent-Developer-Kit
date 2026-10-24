@@ -314,12 +314,13 @@ def test_absent_local_extraction_is_a_limitation_not_a_cloud_defect(setup_worksp
 
 
 @pytest.mark.parametrize("selection", ["missing", None])
-def test_ambiguous_or_stale_selection_fails_before_any_authentication(setup_workspace, monkeypatch, selection):
+@pytest.mark.parametrize("scope", ["full", "workday", "servicenow"])
+def test_ambiguous_or_stale_selection_fails_before_any_authentication(setup_workspace, monkeypatch, selection, scope):
     ws = setup_workspace
     ws.config["agents"].append({"slug": "other", "releaseLine": "da"})
     ws.config["activeAgent"] = selection
     (ws.root / ".local" / "config.json").write_text(json.dumps(ws.config), encoding="utf-8")
-    monkeypatch.setattr("sys.argv", ["flightcheck", "--scope", "full", "--no-open", "--no-telemetry"])
+    monkeypatch.setattr("sys.argv", ["flightcheck", "--scope", scope, "--no-open", "--no-telemetry"])
     with pytest.raises(SystemExit) as exit_result:
         cli.main()
     assert exit_result.value.code == 1

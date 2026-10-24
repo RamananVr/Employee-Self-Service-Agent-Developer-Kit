@@ -11,7 +11,7 @@ in `tests/AGENTS.md`. They complement each other; you need both.
 
 ## Architecture overview
 
-DA maker `full`/`local` diagnostics use diagnostic-only outcomes, not release
+DA maker `full`/`local`/`workday`/`servicenow` diagnostics use diagnostic-only outcomes, not release
 approval. The maker skill and standalone command use the same CLI execution
 path for the same scope; invocation source must not change coverage or findings.
 Local-only is explicit, not a restriction on makers. Read-only selected-DA

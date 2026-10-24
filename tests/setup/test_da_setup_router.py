@@ -2527,3 +2527,20 @@ def test_flightcheck_preserves_standalone_and_configured_scope_modes() -> None:
     assert "scope selection supported by the active configuration" in normalized
     assert "supported scopes are `full`, `environment`" in skill
     assert "scope fixed to `local`" not in normalized
+
+
+def test_flightcheck_renders_the_executed_output_and_allows_interpreted_findings() -> None:
+    instructions = " ".join(_INSTRUCTIONS.read_text(encoding="utf-8").split())
+    prompt = " ".join((_PROMPTS / "flightcheck.prompt.md").read_text(encoding="utf-8").split())
+    skill = (_SOLUTION / "src" / "skills" / "flightcheck" / "SKILL.md").read_text(encoding="utf-8")
+    rendering = skill.split("## Step 3: Read results and present findings", 1)[1]
+
+    for text in (instructions, " ".join(rendering.split())):
+        assert "executed run's output directory" in text
+        assert "workspace/flightcheck/workday-litmus" in text
+        assert "report.html" in text
+    assert "Read `workspace/flightcheck/results.json`" not in rendering
+    assert "[View full report]({OUTPUT_DIRECTORY}/report.html)" in rendering
+    assert "interpreted DA diagnostic summary and findings table" in prompt
+    assert "Do not add process narration" in prompt
+    assert "pre-deployment readiness" not in prompt

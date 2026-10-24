@@ -483,7 +483,7 @@ Then **run `/setup`** in GitHub Copilot Chat to configure your environment.
 | `/evaluate` | Generate evaluation test sets for your agent |
 | `/run` | Prepare and run selected evaluation sets, or inspect history and results |
 | `/test` | Drive topics in the currently deployed agent; DA-GA workflow diagnostics are not yet available |
-| `/flightcheck` | Validate local agent files; standalone FlightCheck retains its full mode |
+| `/flightcheck` | Selected-agent DA setup diagnostics with the same coverage as standalone; local-only inspection is an explicit scope. Legacy readiness modes remain available. |
 | `/push` | Push explicitly selected evaluation sets where supported; other native DA-GA deployment remains unavailable |
 | `/backup-template-configs` | Capture hybrid Workday reference-data template configs before an extension update |
 | `/restore-template-configs` | Restore hybrid Workday reference-data template configs after an extension update |

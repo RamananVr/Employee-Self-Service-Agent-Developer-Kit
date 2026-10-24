@@ -2885,7 +2885,8 @@ def main():
         str(agent.get("releaseLine") or "").strip().casefold() == "da"
         for agent in configured_agents(config)
     )
-    if da_context and args.scope in {"full", "local"} and (
+    da_diagnostic_scopes = {"full", "local", "workday", "servicenow"}
+    if da_context and args.scope in da_diagnostic_scopes and (
         ((config.get("agents") or config.get("agent")) and not selected)
         or (not selected_slug and len(config.get("agents") or []) > 1)
     ):
@@ -2894,7 +2895,7 @@ def main():
     da_selected = is_declarative_agent(SimpleNamespace(
         config=config, agent_slug=selected_slug or selected.get("slug"),
     ))
-    if args.scope in {"full", "local"} and da_selected:
+    if args.scope in da_diagnostic_scopes and da_selected:
         if args.runtime_reachability or args.alm_import_probe:
             print("ERROR: DA maker diagnostics are read-only; runtime and import probes are not allowed.")
             sys.exit(2)
