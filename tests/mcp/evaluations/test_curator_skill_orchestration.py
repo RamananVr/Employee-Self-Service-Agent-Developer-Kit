@@ -901,7 +901,13 @@ def test_servicenow_live_scoped_search_and_fetch_contracts_reject_unsafe_request
 
     missing_scope = backend.invoke(
         "graph_external_item_search",
-        {"contentSources": [], "query": "leave", "limit": 5, "orderBy": ["rank"]},
+        {
+            "contentSources": [],
+            "query": "leave",
+            "limit": 5,
+            "orderBy": ["rank"],
+            "phase": "broad",
+        },
     )
     multiple_scopes = backend.invoke(
         "graph_external_item_search",
@@ -910,8 +916,14 @@ def test_servicenow_live_scoped_search_and_fetch_contracts_reject_unsafe_request
             "query": "leave",
             "limit": 5,
             "orderBy": ["rank"],
+            "phase": "broad",
         },
     )
+    for scope_violation in (missing_scope, multiple_scopes):
+        assert (
+            scope_violation.result.get("error")
+            == "Graph search requires one bounded connection scope."
+        )
     invalid_table = backend.invoke(
         "get_record",
         {"table": "incident", "sys_id": "sys-leave", "fields": SERVICENOW_KB_FIELDS},

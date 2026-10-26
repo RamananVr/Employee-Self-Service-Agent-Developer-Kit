@@ -137,6 +137,14 @@ def _grader(parent: dict[str, Any], rows: list[dict[str, Any]]) -> tuple[
     return "GeneralQuality", None
 
 
+def _row_source_url(document: dict[str, Any]) -> str:
+    extension_data = document.get("extensionData")
+    source_url = extension_data.get("sourceUrl") if isinstance(
+        extension_data, dict
+    ) else None
+    return source_url if isinstance(source_url, str) else ""
+
+
 def _single_turn_csv_table(
     parent: dict[str, Any],
     single_turn_docs: list[tuple[dict[str, Any], Path]],
@@ -144,15 +152,22 @@ def _single_turn_csv_table(
     source_rows: list[dict[str, Any]] = []
     for document, _ in single_turn_docs:
         document_rows = document.get("rows")
+        source_url = _row_source_url(document)
         if isinstance(document_rows, list):
-            source_rows.extend(
-                row for row in document_rows if isinstance(row, dict)
-            )
+            for row in document_rows:
+                if not isinstance(row, dict):
+                    continue
+                enriched_row = dict(row)
+                enriched_row["_sourceUrl"] = source_url
+                source_rows.append(enriched_row)
 
     method, passing_score = _grader(parent, source_rows)
     headers = ["Prompt", "Expected response", "Test Method Type"]
     if passing_score is not None:
         headers.append("Passing Score")
+    has_source_url = any(row.get("_sourceUrl") for row in source_rows)
+    if has_source_url:
+        headers.append("Source URL")
 
     export_rows = []
     for row in source_rows:
@@ -163,6 +178,8 @@ def _single_turn_csv_table(
         }
         if passing_score is not None:
             export_row["Passing Score"] = passing_score
+        if has_source_url:
+            export_row["Source URL"] = _formula_safe(row.get("_sourceUrl") or "")
         export_rows.append(export_row)
     return headers, export_rows
 

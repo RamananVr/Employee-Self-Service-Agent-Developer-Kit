@@ -16,7 +16,7 @@ from flightcheck.connected_kb_search import (
     classify_graph_connection,
     normalize_external_item_hits,
 )
-from flightcheck.graph_client import GraphClient
+from flightcheck.graph_client import SEARCH_SCOPES, GraphClient
 from flightcheck.graph_connection_resolver import resolve_graph_connection
 
 
@@ -106,7 +106,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         graph = GraphClient(context.tenant_id)
         with redirect_stdout(io.StringIO()):
-            graph.authenticate()
+            graph.authenticate(extra_scopes=SEARCH_SCOPES)
     except Exception as exc:
         print(json.dumps(_error_result(
             f"Microsoft Graph authentication failed: {exc}"

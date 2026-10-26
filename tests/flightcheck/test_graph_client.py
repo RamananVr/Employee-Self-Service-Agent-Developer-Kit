@@ -196,9 +196,16 @@ def test_me_fallback_missing_company_name_returns_empty():
 
 
 def test_external_item_scope_is_requested():
+    # ExternalItem.Read.All is admin-consent and only needed by the
+    # connected-KB search path, so it lives in SEARCH_SCOPES, not the
+    # default GRAPH_SCOPES every FlightCheck Graph check requests.
     assert (
         "https://graph.microsoft.com/ExternalItem.Read.All"
-        in graph_client.GRAPH_SCOPES
+        in graph_client.SEARCH_SCOPES
+    )
+    assert (
+        "https://graph.microsoft.com/ExternalItem.Read.All"
+        not in graph_client.GRAPH_SCOPES
     )
 
 

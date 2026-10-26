@@ -54,9 +54,21 @@ GRAPH_SCOPES = [
     # ExternalConnection.ReadWrite.OwnedBy / ExternalConnection.ReadWrite.All.
     # We ask for the read-only one because FlightCheck never mutates state.
     "https://graph.microsoft.com/ExternalConnection.Read.All",
-    # Microsoft Search requires delegated ExternalItem.Read.All when querying
-    # externalItem content. See the official Search API permissions table:
-    # https://learn.microsoft.com/graph/api/search-query#permissions
+]
+
+# Microsoft Search requires delegated ExternalItem.Read.All when querying
+# externalItem content. See the official Search API permissions table:
+# https://learn.microsoft.com/graph/api/search-query#permissions
+#
+# Kept out of GRAPH_SCOPES: it's an admin-consent scope, and bundling it into
+# the default scope set would make every authenticate() caller request it —
+# including unrelated FlightCheck Graph checks that never call
+# search_external_items(). Tenants that had already consented the existing
+# read-only scopes could then see new consent prompts/failures for a
+# permission their FlightCheck checks don't use. Callers that actually need
+# connected-KB search (e.g. search_connected_kb.py) pass this via
+# ``authenticate(extra_scopes=SEARCH_SCOPES)``.
+SEARCH_SCOPES = [
     "https://graph.microsoft.com/ExternalItem.Read.All",
 ]
 
@@ -293,8 +305,15 @@ class GraphClient:
         self.tenant_id = tenant_id
         self._token: str | None = None
 
-    def authenticate(self) -> str:
-        """Acquire a Graph access token, reusing the shared MSAL cache."""
+    def authenticate(self, extra_scopes: list[str] | None = None) -> str:
+        """Acquire a Graph access token, reusing the shared MSAL cache.
+
+        ``extra_scopes`` lets a specific call site (e.g. connected-KB search)
+        request additional admin-consent scopes beyond the default
+        ``GRAPH_SCOPES``, without bundling them into every FlightCheck Graph
+        check's token request. See ``SEARCH_SCOPES`` for the rationale.
+        """
+        scopes = GRAPH_SCOPES + list(extra_scopes) if extra_scopes else GRAPH_SCOPES
         authority = f"https://login.microsoftonline.com/{self.tenant_id}"
         cache = msal.SerializableTokenCache()
         cache_path = os.path.join(".local", ".token_cache.bin")
@@ -311,12 +330,12 @@ class GraphClient:
         accounts = app.get_accounts()
         result = None
         if accounts:
-            result = app.acquire_token_silent(GRAPH_SCOPES, account=accounts[0])
+            result = app.acquire_token_silent(scopes, account=accounts[0])
 
         if not result or "access_token" not in result:
             print("Opening browser for Microsoft Graph sign-in...")
             result = app.acquire_token_interactive(
-                GRAPH_SCOPES, prompt="select_account"
+                scopes, prompt="select_account"
             )
 
         if "access_token" not in result:

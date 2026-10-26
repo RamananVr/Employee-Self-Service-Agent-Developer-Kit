@@ -29,7 +29,7 @@ class _FakeGraph:
         self.search_calls: list[tuple[str, str, int]] = []
         _FakeGraph.instances.append(self)
 
-    def authenticate(self) -> str:
+    def authenticate(self, extra_scopes: list[str] | None = None) -> str:
         if self.authenticate_output:
             print(self.authenticate_output)
         if self.authenticate_error is not None:
