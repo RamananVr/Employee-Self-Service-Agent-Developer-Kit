@@ -688,6 +688,130 @@ def test_workday_assignment_reads_only_the_configured_application(
     assert code == (expected == "Failed")
 
 
+@pytest.mark.parametrize("stored", ["none", "app", "object", "pair"])
+@pytest.mark.parametrize("selection", ["scope", "checkpoint"])
+def test_explicit_workday_app_overrides_saved_ids_without_persisting_them(
+    setup_workspace, monkeypatch, stored, selection,
+):
+    ws = setup_workspace
+    require_validated_mock(graph_mock)
+    stale_app = "00000000-0000-4000-8000-000000008891"
+    stale_object = "00000000-0000-4000-8000-000000008892"
+    if stored in {"app", "pair"}:
+        ws.config["entraAppId"] = stale_app
+    if stored in {"object", "pair"}:
+        ws.config["entraAppObjectId"] = stale_object
+    original = deepcopy(ws.config)
+    interactions = _capture("env004_dependencies.yaml")
+    content = _body(interactions[1])
+    topic = deepcopy(next(change for change in content["botComponentChanges"] if "InvokeConnectorAction" in json.dumps(change)))
+    topic["component"]["status"] = "Active"
+    ws.content["botComponentChanges"].append(topic)
+    ws.content["connectionReferenceChanges"] = content["connectionReferenceChanges"]
+    reference = ws.content["connectionReferenceChanges"][0]["connectionReference"]
+    reference["connectorId"] = reference["connectorId"].replace("shared_service-now", "shared_workdaysoap")
+    records = _body(next(item for item in interactions if "/connectionreferences" in item["request"]["uri"]))["value"]
+    reference["connectionId"] = next(row["connectionid"] for row in records if row["connectionreferencelogicalname"] == "msdyn_sharedworkdaysoap_workdayruntime")
+    app = graph_mock.application()
+    principal = graph_mock.service_principal(app_role_assignment_required=False)
+    graph_app_id = "00000003-0000-0000-c000-000000000000"
+    graph_principal = graph_mock.service_principal(
+        sp_id="00000000-0000-4000-8000-000000008893", app_id=graph_app_id,
+    )
+    with responses.RequestsMock(assert_all_requests_are_fired=False) as http:
+        _register_native(http, ws)
+        for item in interactions:
+            uri = item["request"]["uri"]
+            if "/connections?" in uri:
+                captured_env = uri.split("/environments/")[1].split("/")[0]
+                http.add("GET", uri.replace(captured_env, ws.config["environmentId"]).split("?")[0], json=_body(item))
+        http.add(
+            **graph_mock.list_applications(applications=[app]),
+            match=[responses.matchers.query_param_matcher({"$filter": f"appId eq '{app['appId']}'"}, strict_match=False)],
+        )
+        for resource in (principal, graph_principal):
+            http.add(
+                **graph_mock.list_service_principals(service_principals=[resource]),
+                match=[responses.matchers.query_param_matcher({"$filter": f"appId eq '{resource['appId']}'"}, strict_match=False)],
+            )
+        http.add(**graph_mock.list_app_role_assignments(sp_id=principal["id"], assignments=[]))
+        http.add(**graph_mock.list_claims_mapping_policies_for_sp(sp_id=principal["id"], policies=[]))
+        http.add(**graph_mock.list_oauth2_permission_grants(grants=[]))
+        options = ["--scope", "workday"] if selection == "scope" else ["--checkpoint", "WD-ASSIGN-001"]
+        payload, _ = _run_cli(ws, monkeypatch, http, [
+            *options, "--workday-app-id", " " + app["appId"].upper() + " ",
+        ])
+        assert not any(stale_app in call.request.url or stale_object in call.request.url for call in http.calls)
+        app_calls = [call for call in http.calls if urlsplit(call.request.url).path.endswith("/applications")]
+        assert len(app_calls) == 1
+    row = _row(payload, "WD-ASSIGN-001")
+    assert row["status"] == "Passed", row["result"]
+    assert "assignment required=False" in row["result"]
+    assert not any(row["status"] == "Error" for row in payload["results"])
+    assert ws.config == original
+    assert json.loads((ws.root / ".local" / "config.json").read_text(encoding="utf-8")) == original
+    if selection == "checkpoint":
+        assert "--workday-app-id " + app["appId"].upper() in payload["rerun_command"]
+
+
+def test_invalid_explicit_workday_app_does_not_inspect_the_saved_application(setup_workspace, monkeypatch):
+    ws = setup_workspace
+    ws.config["entraAppId"] = graph_mock.MOCK_WORKDAY_APP_ID
+    with responses.RequestsMock(assert_all_requests_are_fired=False) as http:
+        _register_native(http, ws)
+        payload, code = _run_cli(ws, monkeypatch, http, [
+            "--checkpoint", "WD-ASSIGN-001", "--workday-app-id", "not-a-guid",
+        ])
+        assert not any("graph.microsoft.com" in call.request.url for call in http.calls)
+    row = _row(payload, "WD-ASSIGN-001")
+    assert row["status"] == "Error"
+    assert "ValueError" in row["result"]
+    assert code == 1
+
+
+@pytest.mark.parametrize("variant", ["web_to_api", "api_to_web", "unrelated", "path"])
+def test_scope_cli_verifies_dataverse_aliases_against_the_selected_environment(
+    setup_workspace, monkeypatch, variant,
+):
+    from flightcheck import maker_diagnostics as maker
+    from flightcheck.checks import _connection_dependencies
+
+    ws = setup_workspace
+    environment = _body(next(
+        item for item in _capture("flightcheck_pp_admin.yaml")
+        if "api.bap.microsoft.com" in item["request"]["uri"] and "/environments/" in item["request"]["uri"]
+    ))
+    metadata = environment["properties"]["linkedEnvironmentMetadata"]
+    web = metadata["instanceUrl"].rstrip("/")
+    api = web.replace(".crm.", ".api.crm.")
+    metadata["instanceApiUrl"] = api
+    ws.config["dataverseEndpoint"] = api if variant == "api_to_web" else web
+    requested = {
+        "web_to_api": api, "api_to_web": web,
+        "unrelated": "https://unrelated.crm.dynamics.com", "path": api + "/other",
+    }[variant]
+    monkeypatch.setattr(_connection_dependencies, "discover_tenant", lambda _: TENANT_ID)
+    with responses.RequestsMock(assert_all_requests_are_fired=False) as http:
+        _register_native(http, ws, environment_body=environment)
+        payload, code = _run_cli(ws, monkeypatch, http, [
+            "--scope", "workday", "--environment-url", requested,
+        ])
+        native_reads = [call for call in http.calls if "/minimalBots/" in call.request.url]
+        assert bool(native_reads) is (variant not in {"unrelated", "path"})
+    row = _row(payload, "DA-AGENT-001")
+    scopes = [call.args[0] for call in maker.authenticate_flightcheck_dependency.call_args_list]
+    if variant in {"unrelated", "path"}:
+        assert row["status"] == "Blocked"
+        assert "different Power Platform environment" in row["result"]
+        assert not any(scope.endswith("/user_impersonation") for scope in scopes)
+        assert code == 1
+    else:
+        assert row["status"] == "Passed", row["result"]
+        assert [scope for scope in scopes if scope.endswith("/user_impersonation")] == [requested + "/user_impersonation"]
+        assert code == 0
+    assert json.loads((ws.root / ".local" / "config.json").read_text(encoding="utf-8")) == ws.config
+
+
 @pytest.mark.parametrize("missing", ["none", "scope_authorization", "graph_permission"])
 def test_workday_scope_requires_authorization_for_the_actual_exposed_scope(
     setup_workspace, monkeypatch, missing,

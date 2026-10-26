@@ -38,6 +38,11 @@ command. Invocation source identifies the caller, not different check coverage
 or elevated permissions. With the same target, scope, permissions and evidence,
 findings must agree; execution timestamps and durations can differ.
 
+An explicit `--workday-app-id` overrides the saved Workday application selection
+for this run only; it does not update workspace configuration. An explicit
+`--environment-url` must match the selected environment's verified Dataverse
+web or API root. An equivalent alias is allowed, not a different target.
+
 ---
 
 ## Step 1: Ask scope (optional)

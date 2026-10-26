@@ -91,7 +91,7 @@ def setup_workspace(tmp_path, monkeypatch):
     return SimpleNamespace(config=config, native=native, content=content, auth=auth, root=tmp_path)
 
 
-def _register_native(http, workspace):
+def _register_native(http, workspace, *, environment_body=None):
     host = derive_environment_host(ENV_ID, "prod")
     for item in workspace.native:
         parsed = urlsplit(item["request"]["uri"])
@@ -104,7 +104,7 @@ def _register_native(http, workspace):
         and "api.bap.microsoft.com" in item["request"]["uri"]
         and "/environments/" in item["request"]["uri"]
     )
-    body = _body(environment)
+    body = deepcopy(environment_body) if environment_body is not None else _body(environment)
     body["name"] = ENV_ID
     url = urlsplit(environment["request"]["uri"])
     url = url._replace(path=url.path.rsplit("/", 1)[0] + "/" + ENV_ID, query="").geturl()
@@ -451,9 +451,12 @@ def test_target_and_account_mismatches_never_proceed_to_native_reads(setup_works
     else:
         ws.config["dataverseEndpoint"] = "https://orgmocktenant.crm.dynamics.com"
         args.environment_url = "https://different.crm.dynamics.com"
-    with responses.RequestsMock() as http:
+    with responses.RequestsMock(assert_all_requests_are_fired=False) as http:
+        if mismatch == "dataverse":
+            _register_native(http, ws)
         result = maker.run_maker_diagnostics(args, ws.config)
-        assert not http.calls
+        assert len(http.calls) == (1 if mismatch == "dataverse" else 0)
+        assert all("api.bap.microsoft.com" in call.request.url for call in http.calls)
     assert result.overall == "SOME_CHECKS_UNVERIFIED"
     assert result.results[0].status == "Blocked"
     assert not result.failed

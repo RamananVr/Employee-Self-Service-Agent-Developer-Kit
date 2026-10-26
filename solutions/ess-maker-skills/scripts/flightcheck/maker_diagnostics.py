@@ -50,9 +50,6 @@ def _configure(runner, args):
     configured_id = runner.config.get("environmentId")
     if configured_id and str(uuid.UUID(str(configured_id))) != env_id:
         raise ValueError("The requested environment differs from the selected agent's configured environment.")
-    configured_url = str(runner.config.get("dataverseEndpoint") or "").rstrip("/").casefold()
-    if args.environment_url and configured_url and args.environment_url.rstrip("/").casefold() != configured_url:
-        raise ValueError("The requested Dataverse URL differs from the configured environment.")
     configured_tenant = runner.config.get("tenantId")
     if configured_tenant and args.tenant_id and (
         str(uuid.UUID(str(configured_tenant))) != str(uuid.UUID(str(args.tenant_id)))
@@ -380,7 +377,11 @@ def run_maker_diagnostics(args, config) -> RunResult:
     if scope not in {"full", "local", "workday", "servicenow", "checkpoint", "profile"}:
         raise ValueError(f"Unsupported DA maker diagnostic scope: {scope!r}.")
     runner = FlightCheckRunner(scope=scope)
-    runner.config = config
+    runner.config = dict(config)
+    workday_app_id = (getattr(args, "workday_app_id", None) or "").strip()
+    if workday_app_id:
+        runner.config["entraAppId"] = workday_app_id
+        runner.config.pop("entraAppObjectId", None)
     runner.agent_slug = args.agent_slug or active_agent(config).get("slug")
     runner.maker_diagnostics = True
     runner.da_strict_errors = True
@@ -396,6 +397,7 @@ def run_maker_diagnostics(args, config) -> RunResult:
         if runner.agent_slug:
             command.extend(("--agent-slug", runner.agent_slug))
         for option, value in (
+            ("--workday-app-id", workday_app_id),
             ("--environment-url", args.environment_url), ("--environment-id", args.environment_id),
             ("--tenant-id", args.tenant_id), ("--ring", args.ring),
             ("--validation-realm", args.validation_realm), ("--preferred-username", args.preferred_username),
