@@ -376,7 +376,11 @@ def test_update_authorizes_every_curator_preselected_set_entry():
     assert "exact generated workspace set folders already preselected" in update
     assert "enter the edit path at Step 2" in update
     assert "enter Flow R1 with the exact preselected sets" in update
-    assert "enter Step 7 directly with the exact preselected sets" in update
+    assert (
+        "enter the **Four maker actions** menu from "
+        "`src/skills/evaluations/experience-contract.md` with the exact "
+        "preselected sets" in update
+    )
     assert "without rediscovering or reselecting those sets" in update_lower
     assert "for normal update entries, always discover sets" in rules
     assert "curator-originated preselected-set handoffs are exempt" in rules
@@ -404,14 +408,6 @@ def test_curator_edit_path_returns_to_mandatory_maker_gate():
             "### Review-state reconciliation",
         ).split()
     ).lower()
-    step_2 = " ".join(
-        _section(
-            update_text,
-            "## Step 2: Identify the requested changes",
-            "## Step 3:",
-        ).split()
-    )
-
     assert "Steps 2 through 6" in wrapper
     assert "return to this maker review gate" in wrapper
     assert "This curator gate has already selected the edit path" in wrapper_gate
@@ -421,24 +417,29 @@ def test_curator_edit_path_returns_to_mandatory_maker_gate():
     assert "show the current csv preview and cases" in curator_handoffs
     assert "skip step 2's generic continuation question" in curator_handoffs
     assert "proceed directly to selecting and editing cases" in curator_handoffs
-    assert "curator edit handoff is the exception" in update.lower()
-    assert "already selected **Edit the test sets myself**" in update
     assert (
-        step_2.index("regenerate its CSV")
-        < step_2.index("curator gate already selected")
-        < step_2.index("mandatory structured question")
+        "return control to the curator skill's mandatory maker review gate"
+        in curator_handoffs
     )
-    assert "do not ask this question again" in step_2
-    assert "For every non-curator entry" in step_2
-    assert "How would you like to continue with **{set name}**?" in step_2
-    assert "**Edit the test set myself**" in step_2
-    assert "**Send it to a judge or SME for feedback**" in step_2
-    assert "**Keep it unchanged**" in step_2
-    assert (
-        "After Step 6 completes, return control to the curator skill's mandatory maker review gate"
-        in update
+    assert "do not fall through to step 6a or step 7" in curator_handoffs
+
+    # The per-set "How would you like to continue with {set}?" question the
+    # old architecture duplicated inline in Step 2 is gone: Step 2 now offers
+    # only ONE generic continuation surface (the shared Four maker actions
+    # menu, or its explicit edit/add variant), which is exactly the thing the
+    # curator-handoff text above says to "skip." There is nothing left to
+    # duplicate, so the guarantee now lives solely in the handoffs section
+    # asserted above.
+    step_2 = " ".join(
+        _section(
+            update_text,
+            "## Step 2: Identify the requested changes",
+            "## Step 3:",
+        ).split()
     )
-    assert "Do not fall through to Step 6a or Step 7" in update
+    assert "If this is an explicit edit/add handoff" in step_2
+    assert "Otherwise show **Four maker actions**" in step_2
+    assert "Keep/cancel does not mutate or deploy" in step_2
 
 
 def test_dispatcher_delegates_required_agent_instructions_collection():
@@ -454,43 +455,67 @@ def test_flow_r1_accepts_curator_preselected_sets_without_reselection():
         _section(
             update_text,
             "### Flow R1 — Tag selected test sets for review",
-            "The pushed parent description contains:",
+            "On Dataverse, the pushed parent description contains:",
         ).split()
     )
 
     assert "When Flow R1 is entered from the curator maker review gate" in flow_r1
     assert "exact generated workspace set folders as already preselected" in flow_r1
     assert "Do not run `evaluation_review.py --list-all`" in flow_r1
-    assert "ask the maker to select the sets again" in flow_r1
+    assert "ask the maker to select them again" in flow_r1
+
+    # The old architecture deferred a curator-originated handoff's actual push
+    # to a separately-entered "Step 7," entered exactly once regardless of set
+    # count. The new architecture has no such deferral: Flow R1 itself follows
+    # deployment-flow.md inline (step 5) and persists the review marker (step
+    # 6) for every preselected set, repeating that full sequence once per set
+    # -- there is no longer a separate curator-only Step 7 hop to gate.
+    assert "Continue directly at step 5 for every preselected set" in flow_r1
+    assert "repeating steps 5 through 7 once per set" in flow_r1
+    curator_entry = flow_r1.index(
+        "Continue directly at step 5 for every preselected set"
+    )
     status_update = flow_r1.index("--status review_requested")
-    curator_handoff = flow_r1.index(
-        "For a curator-originated preselected-set handoff, enter Step 7 exactly once"
-    )
-    assert status_update < curator_handoff
+    assert curator_entry < status_update
+
     assert (
-        "Do not run configuration, promotion, dry-run, or push actions before that "
-        "Step 7 handoff" in flow_r1
+        "Follow `src/skills/evaluations/deployment-flow.md` before remote mutation"
+        in flow_r1
     )
-    assert "For every other Flow R1 entry" in flow_r1
     assert (
-        "enter Step 7 and follow its push-decision, configuration, promotion, "
-        "dry-run, push, cleanup, and post-push gates" in flow_r1
+        "The selected Request Review action authorizes the required "
+        "non-destructive push" in flow_r1
     )
 
 
 def test_update_mixed_declines_do_not_stop_approved_pushes():
     update = _normalized("src/skills/evaluations/update/SKILL.md").lower()
 
-    assert "for each set the user declines" in update
-    assert "do not finish the overall flow while `push-approved sets`" in update
-    assert "continues through steps 8 and 9" in update
+    # The old "push-approved sets" bookkeeping collection, and the guarantee
+    # that declining one set in a batch must not block another set's already
+    # approved push, no longer exist as a bookkeeping problem at all: per the
+    # Curator-originated preselected-set handoffs section,
+    # `evaluation_deployment.py` deploys exactly one set per invocation, so a
+    # decline on one set has no shared state through which it could block a
+    # push for a different set.
+    assert "push-approved sets" not in update
+    assert "repeat the applicable handoff independently per set" in update
+    assert (
+        "`evaluation_deployment.py` previews and deploys exactly one set per "
+        "invocation" in update
+    )
+    assert (
+        "runs its deployment-flow sequence once per set, never a single "
+        "batched command" in update
+    )
 
 
 def test_run_skill_is_referenced_only_after_successful_push():
     wrapper = _read("src/skills/evaluations/curate/SKILL.md")
     update = _read("src/skills/evaluations/update/SKILL.md")
+    deployment_flow = _read("src/skills/evaluations/deployment-flow.md")
+    experience_contract = _read("src/skills/evaluations/experience-contract.md")
     run = _read("src/skills/evaluations/run/SKILL.md")
-    normalized = " ".join(update.split())
     run_handoff = " ".join(
         _section(
             run,
@@ -500,21 +525,29 @@ def test_run_skill_is_referenced_only_after_successful_push():
     )
 
     assert "src/skills/evaluations/run/SKILL.md" not in wrapper
-    success_gate = normalized.index(
-        "If one or more selected sets completed `push.py --yes` successfully"
-    )
-    run_reference = normalized.index("src/skills/evaluations/run/SKILL.md")
 
-    assert success_gate < run_reference
-    assert "**Run an evaluation**" in update
-    assert "**View results**" in update
-    assert "**Finish**" in update
-    assert "Wait for the user's response" in normalized
-    assert "exact successfully pushed set names and IDs" in normalized
-    assert "eligible-set scope" in normalized
-    assert "choosing a next action does not select a test set or run" in normalized
-    assert "discovery and selection must remain separate user turns" in normalized
-    assert "Do not offer **Run an evaluation** as immediately available" in update
+    # update/SKILL.md no longer builds its own post-push Run/View/Finish menu
+    # gated on "one or more selected sets completed push.py --yes
+    # successfully": that batch-eligibility bookkeeping was replaced by the
+    # shared, per-set Four maker actions menu (experience-contract.md), whose
+    # Run option hands a single verified deployed set identity straight to
+    # run/SKILL.md Flow A.
+    assert "src/skills/evaluations/run/SKILL.md" in update
+    deployment_table_row = (
+        "Run | Pass the verified deployed set identity to `run/SKILL.md`; "
+        "complete connection prerequisites and start exactly once"
+    )
+    assert deployment_table_row in deployment_flow
+
+    experience_run_row = (
+        "`run/SKILL.md` Flow A; preserve its separate discovery/selection "
+        "turn, review and connection gates; it owns required deployment and run"
+    )
+    assert experience_run_row in experience_contract
+
+    # run/SKILL.md's own eligible-set-handoff section still scopes discovery
+    # and selection to whatever update actually hands it, in case a future
+    # caller hands over more than one successfully pushed name.
     assert "Whenever `src/skills/evaluations/update/SKILL.md` enters" in run_handoff
     assert "from its post-push next actions" in run_handoff
     assert "whether every selected set succeeded or only some did" in run_handoff
@@ -527,60 +560,90 @@ def test_run_skill_is_referenced_only_after_successful_push():
 
 
 def test_update_step_7_is_direct_curator_handoff_not_only_curator_entry():
-    update = _read("src/skills/evaluations/update/SKILL.md")
-    step_7 = _section(update, "## Step 7: Ask whether to push", "## Step 8:")
+    update_text = _read("src/skills/evaluations/update/SKILL.md")
+    step_7 = _section(
+        update_text,
+        "## Step 7: Continue the selected deployment action",
+        "## Step 8:",
+    )
     normalized = " ".join(step_7.split()).lower()
+    curator_handoffs = " ".join(
+        _section(
+            update_text,
+            "### Curator-originated preselected-set handoffs",
+            "### Review-state reconciliation",
+        ).split()
+    )
 
-    assert "authoritative post-validation lifecycle" in normalized
-    assert "src/skills/evaluations/curate/SKILL.md" in update
-    assert "one of several authorized curator entries" in normalized
-    assert "step 2 edit path or flow r1" in normalized
-    assert "exact generated workspace set folders" in normalized
+    # Step 7 itself no longer special-cases curator entries at all: it is one
+    # generic deployment gate, entered for Request Review, explicit push, or
+    # confirmed reviewer completion, regardless of how the set was selected.
+    assert "curator" not in normalized
     assert (
-        "curator structural validation and maker kit quality validation both complete successfully"
-        in normalized
+        "enter only for request review, explicit evaluation push, or "
+        "confirmed reviewer completion" in normalized
     )
-    assert "a direct step 7 handoff is allowed only from" in normalized
-    assert "keep them unchanged" in normalized
-    assert "judge or sme path has completed flow r1 as applicable" in normalized
-    assert "normal update entry" in normalized
-    assert "curator direct-handoff entry" in normalized
+    assert "deployment-flow.md" in normalized
     assert (
-        normalized.index("normal update entry")
-        < normalized.index("curator direct-handoff entry")
-        < normalized.index("the generic normal-update prerequisite")
+        "owns setup/backend admission, review reconciliation, promotion "
+        "collisions, scoped dry-run visibility, action-aware authorization, "
+        "verified push/no-op, and success-only cleanup" in normalized
     )
-    assert "exact generated workspace set folders are preselected" in normalized
-    assert "maker gate choice is **keep them unchanged**" in normalized
-    assert "flow r1 has completed" in normalized
-    assert "exempt from the generic normal-update prerequisite" in normalized
-    assert "ready locally" in normalized
-    assert "enter step 7 directly" in normalized
-    assert "do not repeat steps 1 through 6" in normalized
-    assert "another skill" not in normalized
-    assert "decline/keep-local" in normalized
-    assert "optional review tagging" in normalized
-    assert "setup check" in normalized
-    assert "promotion" in normalized
-    assert "scoped dry-run and push" in normalized
-    assert "cleanup" in normalized
-    assert "final status" in normalized
+
+    # The replaced guarantee: the curator's "Keep them unchanged" handoff no
+    # longer gets a bespoke direct-to-Step-7 entry point. It enters the same
+    # shared Four maker actions menu as any other set, and deployment happens
+    # only if the maker explicitly chooses Request Review or Run -- exactly
+    # like any other set, with no special curator-only Step-7 bypass needed.
+    assert "**Keep them unchanged**" in curator_handoffs
+    assert "enter the **Four maker actions** menu from" in curator_handoffs
+    assert (
+        'do not ask an implicit "push it now?" question for this handoff'
+        in curator_handoffs.lower()
+    )
+    assert (
+        "follow flow r1 or `run/skill.md` flow a exactly as for any other set"
+        in curator_handoffs.lower()
+    )
+    assert (
+        "each preselected set finishes local-only, exactly like any other "
+        "set for which no push action was selected" in curator_handoffs.lower()
+    )
 
 
 def test_mixed_push_outcomes_limit_run_and_view_to_successful_sets():
-    update = _normalized("src/skills/evaluations/update/SKILL.md")
+    deployment_flow_text = _read("src/skills/evaluations/deployment-flow.md")
+    deployment_flow = " ".join(deployment_flow_text.split())
 
-    assert "For mixed multi-set outcomes" in update
-    assert "available only for the sets whose push succeeded" in update
-    assert (
-        "Identify those eligible sets before asking the next-action question" in update
+    # The old "mixed multi-set outcomes" bookkeeping assumed one push could
+    # cover several sets at once, needing to recompute which ones succeeded
+    # before offering Run/View. That bookkeeping is gone: every action
+    # (Request Review, Run, explicit push, reviewer completion) is its own
+    # independently previewed, authorized, and verified deployment of exactly
+    # one set, so there is no batch outcome left to disambiguate.
+    assert "For mixed multi-set outcomes" not in deployment_flow
+
+    continue_table_header = "## Continue exactly the intended action"
+    assert continue_table_header in deployment_flow_text
+    continuation = " ".join(
+        _section(
+            deployment_flow_text, continue_table_header, "On error or cancellation"
+        ).split()
     )
-    assert "retain the mandatory local-only reminder and resume-push guidance" in update
-    assert "they are not eligible for Run or View actions in this interaction" in update
+    assert "Request Review / Flow R1" in continuation
     assert (
-        "If no set was successfully pushed, do not offer the next-action question"
-        in update
+        "Run | Pass the verified deployed set identity to `run/SKILL.md`"
+        in continuation
     )
+    assert "Explicit evaluation push | Report deployment only" in continuation
+    assert "Reviewer completion / Flow R2" in continuation
+
+    # Each row's continuation is conditioned on this exact set's verified
+    # deployment, never on a batch-wide success/failure tally.
+    assert "Only after verified success" in deployment_flow
+    assert "A preview alone is not synchronization proof" in deployment_flow
+    assert "never claim review availability" in deployment_flow
+    assert "after failed verification" in deployment_flow
 
 
 def test_curator_wrapper_blocks_on_missing_input_or_failed_validation():
@@ -633,105 +696,97 @@ def test_curator_wrapper_delegates_push_contract_without_commands():
 
 
 def test_update_owns_concrete_workspace_push_and_cleanup_gates():
+    deployment_text_raw = _read("src/skills/evaluations/deployment-flow.md")
     update_text = _read("src/skills/evaluations/update/SKILL.md")
-    update = " ".join(update_text.split())
-    step_8 = " ".join(
-        _section(
-            update_text,
-            "## Step 8: Prepare the selected set for push",
-            "## Step 9:",
-        ).split()
-    )
-    step_9_text = _section(
-        update_text, "## Step 9: Dry run and push", "## Step 10:"
-    )
-    step_9 = " ".join(step_9_text.split())
-    step_9_lines = [line.strip() for line in step_9_text.splitlines()]
 
-    promote = (
-        'python scripts/evaluation_promotion.py promote --set-name "{set}" '
-        '--agent-folder "{agent.folder}"'
+    # The concrete promote/dry-run/push/cleanup commands moved out of
+    # update/SKILL.md's old Step 8/9 (which no longer exist) and into
+    # deployment-flow.md's "Promotion, scoped deployment, and verification"
+    # section, which every deployment-triggering action now shares.
+    section_raw = _section(
+        deployment_text_raw,
+        "## Promotion, scoped deployment, and verification",
+        "## Continue exactly the intended action",
     )
+    section = " ".join(section_raw.split())
+
     dry_run = 'python scripts/push.py --only "evaluations/{set}/*" --dry-run'
     confirmed_push = 'python scripts/push.py --only "evaluations/{set}/*" --yes'
-    confirmed_force_delete_push = (
-        'python scripts/push.py --only "evaluations/{set}/*" --yes --force-delete'
-    )
-    cleanup = (
-        'python scripts/evaluation_promotion.py cleanup --set-name "{set}" '
-        '--agent-folder "{agent.folder}"'
-    )
 
-    assert promote in step_8
-    assert "preserves the workspace source until the push succeeds" in step_8
-    assert "until cleanup completes successfully" in step_8
-    assert dry_run in step_9_lines
-    assert confirmed_push in step_9_lines
-    assert confirmed_force_delete_push in step_9_lines
-
-    dry_run_line = step_9_lines.index(dry_run)
-    confirmation_line = next(
-        index
-        for index, line in enumerate(step_9_lines)
-        if line.startswith("Show the output and get confirmation.")
-    )
-    confirmed_push_lines = (
-        step_9_lines.index(confirmed_push),
-        step_9_lines.index(confirmed_force_delete_push),
-    )
-
-    assert all(dry_run_line < line for line in confirmed_push_lines)
-    assert all(confirmation_line < line for line in confirmed_push_lines)
+    assert "evaluation_promotion.py promote" in section
+    assert "preserving `review.json` and the workspace source" in section
+    assert dry_run in section
+    assert confirmed_push in section
     assert (
-        "Use `--yes` only after the user explicitly confirms the push in Step 7"
-        in step_9
+        "Use `--yes --force-delete` only after showing and approving the "
+        "exact selected" in section
     )
-    assert step_9.index("Only when `push.py --yes` exits successfully") < step_9.index(
-        cleanup
+    assert "evaluation_promotion.py cleanup" in section
+
+    promote_index = section.index("evaluation_promotion.py promote")
+    dry_run_index = section.index(dry_run)
+    push_index = section.index(confirmed_push)
+    verify_index = section.index("Verify the deployed identity")
+    cleanup_index = section.index("evaluation_promotion.py cleanup")
+
+    assert promote_index < dry_run_index < push_index < verify_index < cleanup_index
+    assert (
+        "A dry run, failure, cancellation, or failed verification never "
+        "authorizes cleanup" in section
     )
-    assert "do not perform cleanup" in step_9
-    assert "workspace source remains available for retry" in step_9
-    assert "must not duplicate these questions, commands, or behaviors" in update
+    deployment_text = " ".join(deployment_text_raw.split())
+    assert "preserve source files and the returned recovery details" in deployment_text
+
+    # update/SKILL.md delegates ownership of this concrete sequence rather
+    # than duplicating it inline.
+    step_7 = " ".join(
+        _section(
+            update_text,
+            "## Step 7: Continue the selected deployment action",
+            "## Step 8:",
+        ).split()
+    )
+    assert "src/skills/evaluations/deployment-flow.md" in step_7
+    assert "do not run the same push from both skills" in step_7.lower()
 
 
 def test_mixed_push_approval_scopes_every_mutation_to_approved_sets():
-    update_text = _read("src/skills/evaluations/update/SKILL.md")
-    step_7 = _section(update_text, "## Step 7:", "## Step 8:")
-    step_8 = _section(update_text, "## Step 8:", "## Step 9:")
-    step_9 = _section(update_text, "## Step 9:", "## Step 10:")
-    step_10 = update_text[update_text.index("## Step 10:") :]
-    normalized_step_7 = " ".join(step_7.split())
-    normalized_step_8 = " ".join(step_8.split())
-    normalized_step_9 = " ".join(step_9.split())
-    normalized_step_10 = " ".join(step_10.split())
-    assert "`push-approved sets`" in normalized_step_7
-    assert "add only that set" in normalized_step_7.lower()
-    assert "declined or kept local" in normalized_step_7.lower()
-    assert "never add" in normalized_step_7.lower()
-    assert "two selected sets" in normalized_step_7.lower()
-    assert "one is approved" in normalized_step_7.lower()
-    assert "one is declined" in normalized_step_7.lower()
-    assert "only the approved set" in normalized_step_7.lower()
+    deployment_text = _normalized("src/skills/evaluations/deployment-flow.md")
+    update_text_raw = _read("src/skills/evaluations/update/SKILL.md")
+    update_text = _normalized("src/skills/evaluations/update/SKILL.md")
+
+    # The old "push-approved sets" bookkeeping collection -- which scoped
+    # every mutation to a maker-approved subset of a multi-set batch -- no
+    # longer exists, and the cross-set leakage it guarded against is now
+    # structurally impossible: every promotion/dry-run/push/cleanup call is
+    # already scoped to exactly one set via `--only "evaluations/{set}/*"`,
+    # and `evaluation_deployment.py` deploys exactly one set per invocation.
+    assert "push-approved sets" not in deployment_text
+    assert "push-approved sets" not in update_text
+
+    assert 'The selected-set scope is `--only "evaluations/{set}/*"`' in deployment_text
+    assert "for each selected set" in deployment_text
     assert (
-        "review tagging apply only to `push-approved sets`"
-        in normalized_step_7
+        "Never use an unscoped push: unrelated pending topics, workflows, "
+        "and sets must remain local" in deployment_text
     )
-    assert "Operate only on `push-approved sets`" in normalized_step_8
-    assert "Promotion must never" in normalized_step_8
-    assert "every set in `push-approved sets`" in normalized_step_9
-    assert "never appear in the scoped dry-run" in normalized_step_9
-    assert "only for members of `push-approved sets`" in normalized_step_9
-    assert "never appear in a `--yes` push" in normalized_step_9
+    assert "Use the existing push APIs for the selected backend" in deployment_text
+
+    curator_handoffs = " ".join(
+        _section(
+            update_text_raw,
+            "### Curator-originated preselected-set handoffs",
+            "### Review-state reconciliation",
+        ).split()
+    )
     assert (
-        "successfully pushed members of `push-approved sets`"
-        in normalized_step_9
+        "`evaluation_deployment.py` previews and deploys exactly one set per "
+        "invocation" in curator_handoffs
     )
-    assert "must never appear in cleanup" in normalized_step_9
     assert (
-        "successfully pushed members of `push-approved sets`"
-        in normalized_step_10
+        "runs its deployment-flow sequence once per set, never a single "
+        "batched command" in curator_handoffs
     )
-    assert "must never appear in successful-push actions" in normalized_step_10
 
 
 def test_maker_readme_documents_all_evaluation_generation_sources():
