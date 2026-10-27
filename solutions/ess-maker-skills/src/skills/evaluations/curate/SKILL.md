@@ -375,7 +375,8 @@ Offer exactly:
 2. **Send them to a judge or SME for feedback**
 3. **Keep them unchanged**
 
-Wait for the maker's response. Do not enter update Step 7 before this choice.
+Wait for the maker's response. Do not enter update's **Four maker actions** menu
+or Step 7 before this choice.
 
 Route the response through the update skill without implementing any mutation,
 synchronization, review metadata, or push behavior in this wrapper:
@@ -393,7 +394,8 @@ synchronization, review metadata, or push behavior in this wrapper:
   After Flow R1 records the local review request, continue through update
   **Step 7 onward**.
 - **Keep them unchanged** — hand the exact generated workspace set folders to
-  update **Step 7 onward** as explicitly preselected sets.
+  the update skill's **Four maker actions** menu as explicitly preselected
+  sets.
 
 The update skill is the one authoritative flow for all post-validation
 edit/synchronization/validation, review metadata, keep-local, setup check,

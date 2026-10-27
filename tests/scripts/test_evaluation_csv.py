@@ -4,6 +4,9 @@ import csv
 import sys
 from pathlib import Path
 
+import pytest
+import yaml
+
 
 SCRIPTS = (
     Path(__file__).resolve().parents[2]
@@ -14,6 +17,7 @@ SCRIPTS = (
 sys.path.insert(0, str(SCRIPTS))
 
 import evaluation_csv  # noqa: E402
+import evaluation_method_policy  # noqa: E402
 
 
 def test_passing_score_defaults_for_invalid_threshold():
@@ -57,6 +61,7 @@ def test_regenerate_exports_creates_multi_turn_conversation_csv(tmp_path):
     paths = evaluation_csv.regenerate_evaluation_exports(
         tmp_path,
         timestamp="20260821-1200",
+        strict=False,
     )
 
     assert len(paths) == 1
@@ -91,6 +96,7 @@ def test_regenerate_exports_creates_general_quality_csv(tmp_path):
     paths = evaluation_csv.regenerate_evaluation_exports(
         tmp_path,
         timestamp="20260821-1200",
+        strict=False,
     )
 
     assert len(paths) == 1
@@ -103,7 +109,7 @@ def test_regenerate_exports_creates_general_quality_csv(tmp_path):
     ]
 
 
-def test_regenerate_exports_keeps_mixed_set_single_turn_behavior(tmp_path):
+def _write_mixed_set_fixture(tmp_path: Path) -> tuple[Path, Path, Path]:
     evaluations = tmp_path / "evaluations"
     mixed = evaluations / "mixed"
     following = evaluations / "z-following"
@@ -150,10 +156,29 @@ def test_regenerate_exports_keeps_mixed_set_single_turn_behavior(tmp_path):
     )
     existing = exports / "20260927_Mixed.csv"
     existing.write_text("prior export\n", encoding="utf-8")
+    return mixed, following, existing
+
+
+def test_regenerate_exports_strict_rejects_mixed_set(tmp_path):
+    _write_mixed_set_fixture(tmp_path)
+
+    with pytest.raises(
+        evaluation_method_policy.EvaluationMethodError,
+        match="multi-turn cases cannot use this feature",
+    ):
+        evaluation_csv.regenerate_evaluation_exports(
+            tmp_path,
+            timestamp="20260927",
+        )
+
+
+def test_regenerate_exports_non_strict_keeps_mixed_set_single_turn_behavior(tmp_path):
+    _, _, existing = _write_mixed_set_fixture(tmp_path)
 
     paths = evaluation_csv.regenerate_evaluation_exports(
         tmp_path,
         timestamp="20260927",
+        strict=False,
     )
 
     assert [path.name for path in paths] == [
@@ -225,11 +250,12 @@ def test_generate_set_csv_disambiguates_sanitized_name_collisions(tmp_path):
         folder.mkdir(parents=True)
         (folder / "set.mcs.yml").write_text(
             "kind: EvaluationSet\n"
-            f"displayName: {display_name}\n",
+            f"displayName: {display_name}\n"
+            "graders:\n  - kind: CompareMeaningGrader\n    threshold: 0.7\n",
             encoding="utf-8",
         )
         (folder / "case.mcs.yml").write_text(
-            "kind: EvaluationData\nrows:\n  - input: test\n",
+            "kind: EvaluationData\nrows:\n  - input: test\n    expectedOutput: answer\n",
             encoding="utf-8",
         )
 
@@ -252,3 +278,88 @@ def test_generate_set_csv_disambiguates_sanitized_name_collisions(tmp_path):
     )
     assert first_output.is_file()
     assert second_output.is_file()
+
+
+def _write_strict_set(tmp_path, *, grader="CompareMeaningGrader", expected="Answer"):
+    folder = tmp_path / "evaluations" / "selected"
+    folder.mkdir(parents=True)
+    (folder / "set.mcs.yml").write_text(yaml.safe_dump({
+        "kind": "EvaluationSet", "displayName": "Selected",
+        "graders": [{"kind": grader, "threshold": 0.5}],
+    }), encoding="utf-8")
+    (folder / "case.mcs.yml").write_text(yaml.safe_dump({
+        "kind": "EvaluationData",
+        "rows": [{"input": "Question", "expectedOutput": expected}],
+    }), encoding="utf-8")
+    return folder
+
+
+@pytest.mark.parametrize("grader,expected", [
+    ("GeneralQualityGrader", "Answer"),
+    ("UnknownGrader", "Answer"),
+    ("CompareMeaningGrader", ""),
+    ("CompareMeaningGrader", None),
+    ("CompareMeaningGrader", " \n "),
+])
+def test_strict_export_rejection_preserves_previous_csv(tmp_path, grader, expected):
+    folder = _write_strict_set(tmp_path, grader=grader, expected=expected)
+    exports = folder.parent / "exports"
+    exports.mkdir()
+    previous = exports / "20260820_Selected.csv"
+    previous.write_bytes(b"previous CSV\r\n")
+    with pytest.raises(evaluation_csv.EvaluationMethodError):
+        evaluation_csv.generate_set_csv(folder, exports, timestamp="20260821")
+    assert previous.read_bytes() == b"previous CSV\r\n"
+    assert list(exports.iterdir()) == [previous]
+
+
+def test_failed_atomic_replace_preserves_same_day_and_older_csv(tmp_path, monkeypatch):
+    folder = _write_strict_set(tmp_path)
+    exports = folder.parent / "exports"
+    exports.mkdir()
+    current = exports / "20260821_Selected.csv"
+    previous = exports / "20260820_Selected.csv"
+    for path in (current, previous):
+        path.write_bytes(b"original")
+
+    def fail_replace(*args):
+        raise PermissionError("file is open")
+
+    monkeypatch.setattr(evaluation_csv.os, "replace", fail_replace)
+    with pytest.raises(PermissionError, match="file is open"):
+        evaluation_csv.generate_set_csv(folder, exports, timestamp="20260821")
+    assert current.read_bytes() == previous.read_bytes() == b"original"
+    assert set(exports.iterdir()) == {current, previous}
+
+
+def test_compare_meaning_preserves_threshold_and_formula_safe_multiline_text(tmp_path):
+    folder = _write_strict_set(tmp_path, expected='=answer,"quoted"\nnext | line')
+    output = evaluation_csv.generate_set_csv(folder, folder.parent / "exports")
+    with output.open(newline="", encoding="utf-8") as stream:
+        rows = list(csv.reader(stream))
+    assert rows == [
+        ["Prompt", "Expected response", "Test Method Type", "Passing Score"],
+        ["Question", '\'=answer,"quoted"\nnext | line', "CompareMeaning", "50"],
+    ]
+
+
+def test_strict_export_rejects_mixed_child_kinds_before_creating_exports(tmp_path):
+    folder = _write_strict_set(tmp_path)
+    (folder / "conversation.mcs.yml").write_text(
+        "kind: MultiTurnEvaluationCase\nactivities: []\n", encoding="utf-8"
+    )
+    exports = folder.parent / "exports"
+    with pytest.raises(evaluation_csv.EvaluationMethodError, match="single-response"):
+        evaluation_csv.generate_set_csv(folder, exports)
+    assert not exports.exists()
+
+
+def test_invalid_unselected_sibling_does_not_block_selected_export(tmp_path):
+    folder = _write_strict_set(tmp_path)
+    sibling = folder.parent / "unselected"
+    sibling.mkdir()
+    (sibling / "set.mcs.yml").write_text(
+        "kind: EvaluationSet\n$kind: Unknown\n", encoding="utf-8"
+    )
+    output = evaluation_csv.generate_set_csv(folder, folder.parent / "exports")
+    assert output.is_file()

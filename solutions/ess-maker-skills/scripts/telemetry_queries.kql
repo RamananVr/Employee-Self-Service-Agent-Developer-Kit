@@ -30,7 +30,8 @@
 //    essmakerkit_flightcheck_check  (1 per check; category + status)
 //    essmakerkit_installer_start / _complete
 //    adk_session_start, adk_capability_use, adk_agent_create, adk_agent_deploy,
-//    adk_build_complete, adk_api_call, adk_client_event   (ADK platform family)
+//    adk_build_complete, adk_api_call, adk_client_event,
+//    adk_connect_lifecycle                              (ADK platform family)
 //  Time column on every table: EventInfo_Time (UTC).
 // =============================================================================
 
@@ -91,6 +92,44 @@ essmakerkit_flightcheck_check
 | where EventInfo_Time > ago(30d) and status in ("Failed", "Error")
 | summarize Failures = count() by category
 | order by Failures desc
+
+
+// -----------------------------------------------------------------------------
+// 3b) BLOCKED, SPLIT BY CAUSE  (blockReason — schema 1.5)
+//     The verdict donut shows a single Blocked wedge. blockReason splits it by
+//     cause so admin-API authorization denials (HTTP 401/403, AADSTS*) are
+//     countable on their own, separate from "admin API unreachable"
+//     (adminApiUnavailable: 404 wrong-env, 5xx, timeout) and non-auth blocks.
+//     Enum: adminApiAuthorization | adminApiUnavailable | checkpointContract |
+//           profileCardinality | evidenceAmbiguous | other.
+//     Empty blockReason on a blocked row = pre-1.5 data (not classified).
+//
+// Customers (tenants) and runs blocked by admin-API AUTHORIZATION, by week.
+// Counts real customers only: tenantClass must be "customer" and tenantId
+// must be non-empty (excludes internal, unknown, and empty/synthetic tenants).
+essmakerkit_flightcheck_run
+| where EventInfo_Time > ago(90d)
+| where tenantClass == "customer" and isnotempty(tenantId)
+| where blockReason == "adminApiAuthorization"
+| summarize BlockedRuns = count(), BlockedCustomers = dcount(tenantId)
+          by bin(EventInfo_Time, 7d)
+| order by EventInfo_Time asc
+
+// Full breakdown: runs + distinct customers per block cause (last 30d).
+essmakerkit_flightcheck_run
+| where EventInfo_Time > ago(30d)
+| where tenantClass == "customer" and isnotempty(tenantId)
+| where isnotempty(blockReason)
+| summarize Runs = count(), Customers = dcount(tenantId) by blockReason
+| order by Runs desc
+
+// Which checks drive the admin-API auth blocks (check-level drill-down).
+essmakerkit_flightcheck_check
+| where EventInfo_Time > ago(30d)
+| where tenantClass == "customer" and isnotempty(tenantId)
+| where blockReason == "adminApiAuthorization"
+| summarize Checks = count(), Customers = dcount(tenantId) by checkpointId, category
+| order by Checks desc
 
 
 // -----------------------------------------------------------------------------
@@ -433,3 +472,36 @@ essmakerkit_flightcheck_run
 | take 50
 // Take toolkitGitSha + toolkitGitBranch to the GitHub compare API to
 // determine how far behind the event's emitter was.
+
+
+// -----------------------------------------------------------------------------
+// 10) WORKDAY CONNECT LIFECYCLE — transitions, blockers, retries, and duration
+// -----------------------------------------------------------------------------
+adk_connect_lifecycle
+| where EventInfo_Time > ago(30d) and connector == "workday"
+| summarize Events = count(),
+            Runs = dcount(correlation_id),
+            MaxRetryCount = max(retry_count),
+            MaxResumeCount = max(resume_count)
+    by lifecycle_event, phase, outcome, blocker_category, remediation_id
+| order by Events desc
+
+// Cumulative active duration for completed phases. Paused time is excluded;
+// earlier active segments are included after a block/resume cycle.
+adk_connect_lifecycle
+| where EventInfo_Time > ago(30d)
+| where connector == "workday" and lifecycle_event == "phase_completed"
+| summarize Completions = count(),
+            MedianDurationMs = percentile(duration_ms, 50),
+            P95DurationMs = percentile(duration_ms, 95)
+    by phase
+| order by phase asc
+
+// Trace one lifecycle without relying on tenant names, URLs, or user identity:
+let correlationOfInterest = "<correlation-guid>";
+adk_connect_lifecycle
+| where correlation_id == correlationOfInterest
+| project EventInfo_Time, lifecycle_event, phase, outcome, duration_ms,
+          retry_count, resume_count, blocker_category, remediation_id,
+          toolkit_git_sha, toolkit_git_branch
+| order by EventInfo_Time asc

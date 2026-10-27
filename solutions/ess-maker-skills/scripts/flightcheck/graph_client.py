@@ -298,14 +298,46 @@ def _try_me_company_name_lookup(app, account) -> str:
         return ""
 
 
+def _select_cached_account(accounts: list, preferred_username: str | None):
+    """Pick the cached account matching preferred_username, or the only
+    available account when no preference was given. Returns None when a
+    preference was given but doesn't match any cached account — this must
+    fall through to interactive auth rather than silently reusing a
+    different cached identity.
+    """
+    preferred = str(preferred_username or "").casefold()
+    if preferred:
+        return next(
+            (
+                account for account in accounts
+                if str(account.get("username") or "").casefold() == preferred
+            ),
+            None,
+        )
+    return accounts[0] if accounts else None
+
+
 class GraphClient:
     """Lightweight Microsoft Graph client with MSAL interactive auth."""
 
-    def __init__(self, tenant_id: str):
-        self.tenant_id = tenant_id
-        self._token: str | None = None
+    def __init__(self, tenant_id: str, *, strict_reads: bool = False):
+        """Create a client bound to ``tenant_id``.
 
-    def authenticate(self, extra_scopes: list[str] | None = None) -> str:
+        ``strict_reads`` toggles ``get``/``get_all``'s error handling: when
+        False (default) a 401/403 degrades to a sentinel value (``{"_error":
+        ...}`` or partial results); when True the same conditions raise
+        instead, for callers that must not silently treat "denied" as "empty".
+        """
+        self.tenant_id = tenant_id
+        self.strict_reads = strict_reads
+        self._token: str | None = None
+        self.signed_in_username: str | None = None
+
+    def authenticate(
+        self,
+        extra_scopes: list[str] | None = None,
+        preferred_username: str | None = None,
+    ) -> str:
         """Acquire a Graph access token, reusing the shared MSAL cache.
 
         ``extra_scopes`` lets a specific call site (e.g. connected-KB search)
@@ -328,14 +360,23 @@ class GraphClient:
 
         # Try silent first
         accounts = app.get_accounts()
+        selected_account = _select_cached_account(accounts, preferred_username)
         result = None
-        if accounts:
-            result = app.acquire_token_silent(scopes, account=accounts[0])
+        if selected_account is not None:
+            result = app.acquire_token_silent(
+                scopes,
+                account=selected_account,
+            )
 
         if not result or "access_token" not in result:
             print("Opening browser for Microsoft Graph sign-in...")
+            selected_account = None
+            interactive_options = {"prompt": "select_account"}
+            if preferred_username:
+                interactive_options["login_hint"] = preferred_username
             result = app.acquire_token_interactive(
-                scopes, prompt="select_account"
+                scopes,
+                **interactive_options,
             )
 
         if "access_token" not in result:
@@ -350,6 +391,12 @@ class GraphClient:
         _persist_token_cache(cache, cache_path)
 
         self._token = result["access_token"]
+        claims = result.get("id_token_claims", {}) or {}
+        self.signed_in_username = (
+            claims.get("preferred_username")
+            or claims.get("upn")
+            or (selected_account or {}).get("username")
+        )
         return self._token
 
     @property
@@ -369,8 +416,12 @@ class GraphClient:
         url = f"{GRAPH_BASE}{path}"
         resp = _SESSION.get(url, headers=self.headers, params=params, timeout=30)
         if resp.status_code == 403:
+            if self.strict_reads:
+                raise PermissionError(f"Graph returned HTTP 403 on {path}.")
             return {"_error": "insufficient_permissions", "_status": 403}
         if resp.status_code == 401:
+            if self.strict_reads:
+                resp.raise_for_status()
             return {"_error": "token_expired", "_status": 401}
         resp.raise_for_status()
         return resp.json()
@@ -396,18 +447,40 @@ class GraphClient:
         """
         items: list = []
         url = f"{GRAPH_BASE}{path}"
+        seen_urls: set[str] = set()
         while url:
+            if self.strict_reads:
+                if url in seen_urls:
+                    raise ValueError("Graph returned a repeated collection continuation.")
+                seen_urls.add(url)
             resp = _SESSION.get(url, headers=self.headers, params=params, timeout=30)
             if resp.status_code in (401, 403):
-                if raise_on_permission_error:
+                if self.strict_reads and resp.status_code == 401:
+                    resp.raise_for_status()
+                if raise_on_permission_error or self.strict_reads:
                     raise PermissionError(
                         f"Graph returned HTTP {resp.status_code} on {path}."
                     )
                 return items  # partial results
             resp.raise_for_status()
             data = resp.json()
+            if self.strict_reads and (
+                not isinstance(data, dict) or not isinstance(data.get("value"), list)
+                or any(not isinstance(row, dict) for row in data["value"])
+            ):
+                raise ValueError("Graph returned an invalid resource collection.")
             items.extend(data.get("value", []))
             url = data.get("@odata.nextLink")
+            if self.strict_reads and url is not None:
+                from urllib.parse import urlsplit
+
+                expected, actual = urlsplit(f"{GRAPH_BASE}{path}"), urlsplit(str(url))
+                if (
+                    not isinstance(url, str) or not url
+                    or actual.scheme != expected.scheme or actual.netloc != expected.netloc
+                    or actual.path != expected.path or actual.fragment
+                ):
+                    raise ValueError("Graph returned an invalid collection continuation.")
             params = None  # nextLink is fully qualified
         return items
 

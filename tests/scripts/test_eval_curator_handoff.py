@@ -402,6 +402,25 @@ def test_validate_handoff_rejects_mismatched_case_counts(tmp_path):
     assert exc.value.error_code == "invalid_handoff"
 
 
+def test_validate_handoff_rejects_conflicting_kind_discriminators(tmp_path):
+    handoff = _valid_handoff(tmp_path)
+    workspace = _workspace(tmp_path)
+    case_path = workspace / "benefits" / "case.mcs.yml"
+    case_path.write_text(
+        "kind: EvaluationData\n"
+        "$kind: SomethingElse\n"
+        "rows:\n"
+        "  - input: How?\n"
+        "    expectedOutput: Like this\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(eval_curator_handoff.CuratorHandoffError) as exc:
+        eval_curator_handoff.validate_handoff(tmp_path, handoff)
+
+    assert exc.value.error_code == "invalid_set_folder"
+
+
 def test_validate_handoff_uses_platform_normalization_for_duplicates(
     tmp_path,
     monkeypatch,

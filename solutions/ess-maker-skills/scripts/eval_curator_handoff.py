@@ -15,6 +15,7 @@ import sys
 from typing import Any
 
 import evaluation_csv
+import evaluation_method_policy
 
 
 class CuratorHandoffError(RuntimeError):
@@ -186,7 +187,10 @@ def _validate_set_folder(
         )
     try:
         headers, rows = evaluation_csv.evaluation_csv_table(folder)
-    except evaluation_csv.EvaluationCSVError as exc:
+    except (
+        evaluation_csv.EvaluationCSVError,
+        evaluation_method_policy.EvaluationMethodError,
+    ) as exc:
         raise CuratorHandoffError(
             "invalid_set_folder",
             "Set folder artifacts could not be converted to an evaluation CSV.",

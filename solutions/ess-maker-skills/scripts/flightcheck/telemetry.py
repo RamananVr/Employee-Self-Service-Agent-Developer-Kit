@@ -102,7 +102,12 @@ EVENT_CHECK = "ESSMakerKit.FlightCheck.Check"
 #      upgrade-posture and CA-vs-DA attribution — ADO 7943642.
 # 1.3: added derived ``connector`` (workday|servicenow|"") on run + check —
 #      ADO 7943641.
-TELEMETRY_SCHEMA_VERSION = "1.3"
+# 1.4: added ``agentType`` to check events plus profile/realm/blocking,
+#      severity, and automation dimensions — ADO 7955324.
+# 1.5: added ``blockReason`` to check + run events — splits the single
+#      Blocked verdict wedge by cause so admin-API authorization denials
+#      (HTTP 401/403, AADSTS*) are countable separately from other blocks.
+TELEMETRY_SCHEMA_VERSION = "1.5"
 
 # Short, fail-open timeout (connect, read) seconds. Telemetry runs at the
 # very end of a FlightCheck; we never want it to hang the CLI.
@@ -742,6 +747,29 @@ def get_toolkit_git_branch() -> str:
         return "unknown"
 
 
+# --- Agent-type classification (ADO 7830949 / 7955324) --------------------
+AGENT_TYPE_CUSTOM = "custom_agent"
+AGENT_TYPE_DECLARATIVE = "declarative_agent"
+AGENT_TYPE_UNKNOWN = "unknown"
+AGENT_TYPES = frozenset({
+    AGENT_TYPE_CUSTOM,
+    AGENT_TYPE_DECLARATIVE,
+    AGENT_TYPE_UNKNOWN,
+})
+
+
+def classify_agent_type(git_branch: str) -> str:
+    """Map a bounded toolkit branch to the CA/DA telemetry taxonomy."""
+    if not git_branch:
+        return AGENT_TYPE_UNKNOWN
+    normalized = git_branch.strip().lower()
+    if normalized == "main-ca":
+        return AGENT_TYPE_CUSTOM
+    if normalized == "main":
+        return AGENT_TYPE_DECLARATIVE
+    return AGENT_TYPE_UNKNOWN
+
+
 def _build_event(name: str, ikey_envelope: str, data: dict[str, Any]) -> dict[str, Any]:
     """Build a minimal Common Schema 4.0 envelope.
 
@@ -793,8 +821,8 @@ def _post(ikey: str, events: list[dict[str, Any]]) -> int:
 # ``overall``: it splits the NOT_READY verdict into "a check couldn't even run"
 # (``errored`` — an unhandled exception inside a check, runner.py:135) vs.
 # "checks ran and reported failures" (``failed``). Precedence is errored ->
-# failed -> warnings -> ready so the donut surfaces checks that could not be
-# evaluated at all (the "why did FlightCheck fail to run" signal). We can NOT
+# failed -> blocked -> warnings -> ready so the donut surfaces checks that
+# could not be evaluated at all (the "why did FlightCheck fail to run" signal). We can NOT
 # attribute WHY a check errored (auth vs runtime vs network) — the exception
 # text is never emitted (EUII risk) — so the bucket is deliberately just
 # "errored", not "runtime error". Aria renders the raw value as the slice
@@ -802,21 +830,123 @@ def _post(ikey: str, events: list[dict[str, Any]]) -> int:
 RUN_OUTCOME_READY = "Ready"
 RUN_OUTCOME_WARNINGS = "Ready with warnings"
 RUN_OUTCOME_FAILED = "Failed"
+RUN_OUTCOME_BLOCKED = "Blocked"
 RUN_OUTCOME_ERRORED = "Blocked (check errored)"
+# BLOCKED is a distinct hard gate: an essential platform capability was
+# unavailable (release-blocking), not a check that failed its assertion or
+# crashed. Without this slice a blocked-only run fell through to
+# RUN_OUTCOME_READY, so the donut said "Ready" for a run the runner scored
+# NOT_READY with exit code 1 (ADO 7943641 carry-over).
+RUN_OUTCOME_BLOCKED = "Blocked (gate)"
 
 
 def derive_run_outcome(run_result: Any) -> str:
-    """Bucket a run into a single verdict slice (errored > failed > warnings > ready)."""
+    """Bucket a run into a single verdict slice.
+
+    Precedence: errored > failed > blocked > warnings > ready. ``errored`` and
+    ``failed`` rank above ``blocked`` only to keep the pre-existing slice
+    ordering stable; all three are NOT_READY. ``blocked`` stays above
+    ``warnings`` because a blocked essential capability is a release gate while
+    warnings are advisory.
+    """
     errors = getattr(run_result, "errors", 0) or 0
     failed = getattr(run_result, "failed", 0) or 0
+    blocked = getattr(run_result, "blocked", 0) or 0
     warnings = getattr(run_result, "warnings", 0) or 0
     if errors > 0:
         return RUN_OUTCOME_ERRORED
     if failed > 0:
         return RUN_OUTCOME_FAILED
+    if blocked > 0:
+        return RUN_OUTCOME_BLOCKED
     if warnings > 0:
         return RUN_OUTCOME_WARNINGS
     return RUN_OUTCOME_READY
+
+
+# --- Block-reason attribution (ADO: split the Blocked wedge by cause) -------
+# A blocked CheckResult carries a bounded ``block_reason`` enum set by the
+# runner/checks at the block site. We re-validate it here against a
+# self-contained allow-list (telemetry.py never imports runner) and collapse
+# anything unknown to ``other`` so no free-form string ever reaches Aria,
+# mirroring the _ALLOWED_BRANCHES / _classify_branch privacy pattern above.
+#
+# Primary goal: make admin-API authorization denials (HTTP 401/403 or
+# AADSTS*) countable on their own, separate from "admin API unreachable"
+# (404 wrong-env, 5xx, timeout) and the non-auth block causes.
+BLOCK_REASON_ADMIN_API_AUTHORIZATION = "adminApiAuthorization"
+BLOCK_REASON_ADMIN_API_UNAVAILABLE = "adminApiUnavailable"
+BLOCK_REASON_CHECKPOINT_CONTRACT = "checkpointContract"
+BLOCK_REASON_PROFILE_CARDINALITY = "profileCardinality"
+BLOCK_REASON_EVIDENCE_AMBIGUOUS = "evidenceAmbiguous"
+BLOCK_REASON_OTHER = "other"
+
+# The CheckResult.status value for a blocked check (runner Status.BLOCKED.value).
+# Defined locally so telemetry.py stays decoupled from runner; kept distinct
+# from the RUN_OUTCOME_* donut labels, which are run-level verdicts.
+_CHECK_STATUS_BLOCKED = "Blocked"
+
+_ALLOWED_BLOCK_REASONS = frozenset({
+    BLOCK_REASON_ADMIN_API_AUTHORIZATION,
+    BLOCK_REASON_ADMIN_API_UNAVAILABLE,
+    BLOCK_REASON_CHECKPOINT_CONTRACT,
+    BLOCK_REASON_PROFILE_CARDINALITY,
+    BLOCK_REASON_EVIDENCE_AMBIGUOUS,
+    BLOCK_REASON_OTHER,
+})
+
+# Run-level roll-up precedence (highest first). A run can have several
+# blocked checks with different causes; we surface the most actionable one.
+# Authorization ranks first because it is the signal this split exists to
+# count; "other" is last so a known cause always wins over the fallback.
+_BLOCK_REASON_PRECEDENCE = (
+    BLOCK_REASON_ADMIN_API_AUTHORIZATION,
+    BLOCK_REASON_ADMIN_API_UNAVAILABLE,
+    BLOCK_REASON_CHECKPOINT_CONTRACT,
+    BLOCK_REASON_PROFILE_CARDINALITY,
+    BLOCK_REASON_EVIDENCE_AMBIGUOUS,
+    BLOCK_REASON_OTHER,
+)
+
+
+def derive_check_block_reason(check: Any) -> str:
+    """Bounded block-reason for a single check event.
+
+    Returns "" for any non-blocked check (``block_reason`` is only
+    meaningful when the status is Blocked). For a blocked check, returns the
+    check's ``block_reason`` if it is an allowed enum value, otherwise
+    ``other`` so no free-form string is ever emitted. A blocked check with an
+    empty ``block_reason`` (pre-change data) also collapses to ``other``.
+    """
+    status = getattr(check, "status", "")
+    if status != _CHECK_STATUS_BLOCKED:
+        return ""
+    reason = getattr(check, "block_reason", "") or ""
+    if reason in _ALLOWED_BLOCK_REASONS:
+        return reason
+    return BLOCK_REASON_OTHER
+
+
+def derive_run_block_reason(run_result: Any) -> str:
+    """Roll block reasons of all blocked checks up to one run-level value.
+
+    Returns "" when the run has no blocked checks. Otherwise returns the
+    highest-precedence block reason present across the blocked checks, so a
+    run that is auth-blocked anywhere is countable as such regardless of its
+    final verdict donut slice (a run can be Blocked-count>0 but overall
+    Failed/Errored).
+    """
+    present: set[str] = set()
+    for check in getattr(run_result, "results", []) or []:
+        reason = derive_check_block_reason(check)
+        if reason:
+            present.add(reason)
+    if not present:
+        return ""
+    for reason in _BLOCK_REASON_PRECEDENCE:
+        if reason in present:
+            return reason
+    return BLOCK_REASON_OTHER
 
 
 # --- Connector attribution (ADO 7943641) ----------------------------------
@@ -843,6 +973,14 @@ _WORKDAY_SCOPES = frozenset({
 })
 _SERVICENOW_SCOPES = frozenset({"servicenow"})
 
+# Leading connector tokens for the wrapped run scopes ("profile:<name>" and
+# "checkpoint:<id>") and for connector-led profile names / checkpoint IDs.
+# Profile runs pass scope="profile:workday-da:final" and checkpoint runs pass
+# scope="checkpoint:WD-CONN-012"; without unwrapping, every DA profile run and
+# every single-checkpoint run emitted connector="" (ADO 7943641 carry-over).
+_WORKDAY_LEAD_TOKENS = frozenset({"workday", "wd"})
+_SERVICENOW_LEAD_TOKENS = frozenset({"servicenow", "sn"})
+
 # Check categories from checks/*.py. Category strings are set at CheckResult
 # construction time (e.g. category="Workday", "Workday Tenant", "ServiceNow").
 # Match on the leading token so future subcategories ("Workday Workflows",
@@ -861,9 +999,24 @@ def derive_connector_from_scope(scope: str) -> str:
     if not scope:
         return ""
     s = str(scope).strip().lower()
+    # Unwrap the single-purpose run prefixes so a "profile:" / "checkpoint:"
+    # run attributes the same as a bare "--scope <connector>" run.
+    if s.startswith("profile:"):
+        s = s[len("profile:"):]
+    elif s.startswith("checkpoint:"):
+        s = s[len("checkpoint:"):]
     if s in _WORKDAY_SCOPES:
         return "workday"
     if s in _SERVICENOW_SCOPES:
+        return "servicenow"
+    # Connector-led profile names ("workday-da:final") and checkpoint IDs
+    # ("wd-conn-012") carry the connector in their leading token. Cross-connector
+    # or non-connector scopes ("full", "dv-conn-001", "env-001") fall through
+    # to "" and drill down via the per-check connector dimension.
+    lead = re.split(r"[-:]", s, maxsplit=1)[0]
+    if lead in _WORKDAY_LEAD_TOKENS:
+        return "workday"
+    if lead in _SERVICENOW_LEAD_TOKENS:
         return "servicenow"
     return ""
 
@@ -900,7 +1053,9 @@ def _run_data(
     agent_count: int,
     scope: str,
     invocation_source: str,
+    agent_type: str,
 ) -> dict[str, Any]:
+    validation_context = getattr(run_result, "validation_context", {}) or {}
     return {
         "schemaVersion": TELEMETRY_SCHEMA_VERSION,
         "env": env,
@@ -914,15 +1069,20 @@ def _run_data(
         "adkVersion": get_adk_version(),
         "toolkitGitSha": get_toolkit_git_sha(),
         "toolkitGitBranch": get_toolkit_git_branch(),
+        "agentType": agent_type,
         "scope": scope,
+        "profile": getattr(run_result, "profile", ""),
+        "validationRealm": validation_context.get("realm", ""),
         "invocationSource": invocation_source,
         "connector": derive_connector_from_scope(scope),  # derived: workday|servicenow|""
         "overall": getattr(run_result, "overall", ""),
         "runOutcome": derive_run_outcome(run_result),  # verdict donut split (errored|failed|warnings|ready)
+        "blockReason": derive_run_block_reason(run_result),  # bounded: splits the Blocked wedge by cause ("" when no blocked checks)
         "durationSecs": getattr(run_result, "duration_secs", 0),
         "total": getattr(run_result, "total", 0),
         "passed": getattr(run_result, "passed", 0),
         "failed": getattr(run_result, "failed", 0),
+        "blocked": getattr(run_result, "blocked", 0),
         "warnings": getattr(run_result, "warnings", 0),
         "notConfigured": getattr(run_result, "not_configured", 0),
         "manual": getattr(run_result, "manual", 0),
@@ -940,6 +1100,7 @@ def _check_data(
     run_id: str,
     instance_id: str,
     tenant_id: str,
+    agent_type: str,
     tenant_name: str = "",
 ) -> dict[str, Any]:
     # Identifiers + enums ONLY. Never `result` / `remediation` (EUII risk).
@@ -952,11 +1113,15 @@ def _check_data(
         "tenantId": tenant_id,
         "tenantClass": classify_tenant(tenant_id),
         "tenantName": tenant_name,
+        "agentType": agent_type,
         "checkpointId": getattr(check, "checkpoint_id", ""),
         "category": _category,
         "connector": derive_connector_from_category(_category),  # derived
         "priority": getattr(check, "priority", ""),
         "status": getattr(check, "status", ""),
+        "blockReason": derive_check_block_reason(check),  # bounded: cause when Blocked, "" otherwise
+        "severity": getattr(check, "severity", ""),
+        "automationType": getattr(check, "automation_type", ""),
         "roles": ", ".join(getattr(check, "roles", []) or []),
     }
 
@@ -977,6 +1142,7 @@ def build_events(
 ) -> list[dict[str, Any]]:
     """Build the run envelope + one envelope per check (testable, no IO)."""
     run_id = run_id or str(uuid.uuid4())
+    agent_type = classify_agent_type(get_toolkit_git_branch())
     events = [
         _build_event(
             EVENT_RUN,
@@ -992,6 +1158,7 @@ def build_events(
                 agent_count=agent_count,
                 scope=scope,
                 invocation_source=invocation_source,
+                agent_type=agent_type,
             ),
         )
     ]
@@ -1007,6 +1174,7 @@ def build_events(
                     instance_id=instance_id,
                     tenant_id=tenant_id,
                     tenant_name=tenant_name,
+                    agent_type=agent_type,
                 ),
             )
         )
@@ -1080,6 +1248,7 @@ def selftest() -> int:
             "adkVersion": get_adk_version(),
             "toolkitGitSha": get_toolkit_git_sha(),
             "toolkitGitBranch": get_toolkit_git_branch(),
+            "agentType": classify_agent_type(get_toolkit_git_branch()),
         },
     )
     print(f"Posting selftest event to env='{env}' "

@@ -58,7 +58,7 @@ Column casing differs by table family:
 | Table family | Casing | Example fields |
 |---|---|---|
 | `essmakerkit_flightcheck_run` / `_check` | camelCase | `tenantId`, `tenantName`, `instanceId`, `toolkitGitSha`, `toolkitGitBranch` |
-| `adk_session_start`, `adk_capability_use`, `adk_agent_create`, `adk_agent_deploy`, `adk_build_complete`, `adk_api_call` | snake_case | `tenant_id`, `tenant_name`, `instance_id`, `toolkit_git_sha`, `toolkit_git_branch` |
+| `adk_session_start`, `adk_capability_use`, `adk_agent_create`, `adk_agent_deploy`, `adk_build_complete`, `adk_api_call`, `adk_connect_lifecycle` | snake_case | `tenant_id`, `tenant_name`, `instance_id`, `toolkit_git_sha`, `toolkit_git_branch` |
 
 Time column on every table: `EventInfo_Time` (UTC).
 
@@ -75,9 +75,96 @@ Time column on every table: `EventInfo_Time` (UTC).
 | `toolkit_git_branch` / `toolkitGitBranch` | Bounded classification: `main`, `main-ca`, `detached`, `other`, `unknown` |
 | `agent_type` / `agentType` | Derived from branch: `custom_agent` (`main-ca`) / `declarative_agent` (`main`) / `unknown`. Present once PR #336 / #337 are merged. |
 
+`adk_connect_lifecycle` records privacy-safe provider lifecycle transitions.
+For Workday investigations, filter `connector == "workday"` and stitch one
+run using `correlation_id`. Its bounded dimensions include `lifecycle_event`,
+`phase`, `outcome`, `duration_ms`, `retry_count`, `resume_count`, and
+`blocker_category`. Maker-validation blockers can also carry the bounded
+`remediation_id` (`WD-E2E-006`). Legacy `employee_validation` phase input is
+normalized to `maker_validation`. `agent_id` is emitted only when it is a
+canonical GUID. It does not contain free-form errors, URLs, connection
+identifiers, or employee data.
+
+`phase` is restricted to the six Workday phases (normalized with underscores)
+or `unknown`. `blocker_category` is restricted to `auth`, `permissions`,
+`connection`, `runtime`, `validation`, `state`, `timeout`, `platform`, or
+`unknown`. Arbitrary caller values are never slugged into dimensions.
+
+One `invoked` event is recorded per lifecycle when the controller's outer
+`status` boundary starts a `/connect` conversation, not for repeated progress
+refreshes or internal controller commands. If target reconciliation rotates
+the lifecycle, the invocation is carried to the new correlation.
+Blocking an active phase records `phase_paused` followed by `blocked`; a later
+retry records `phase_resumed`. `phase_completed.duration_ms` is cumulative
+active time across all paused/resumed segments for that phase.
+Use the lifecycle event's journal timestamp and `duration_ms` for transition
+analysis; asynchronous delivery means `EventInfo_Time` can be later.
+
+Changing an existing target environment, agent identity, Entra tenant, or
+Workday tenant starts a new correlation ID. An in-progress prior run records
+`abandoned` before rotation. Journal records retain their own correlation IDs,
+so bounded history can safely contain events from both the previous and current
+target without combining them in Kusto.
+
 ---
 
-## Investigation workflow: "was tenant X on an up-to-date ADK when this happened?"
+## Blocked verdict: splitting by cause (`blockReason`, schema 1.5)
+
+The run verdict donut shows a single `Blocked (gate)` wedge: an essential
+platform capability was unavailable, so the run is release-blocking. That
+wedge does not say *why*. `blockReason` splits it by cause so admin-API
+authorization denials are countable on their own.
+
+Emitted on both `essmakerkit_flightcheck_run` and
+`essmakerkit_flightcheck_check`. Bounded enum (never free-form):
+
+| `blockReason` | Meaning |
+|---|---|
+| `adminApiAuthorization` | Admin-API call denied by authorization: HTTP 401/403 or an `AADSTS*` error. This is the signal the split exists to count. |
+| `adminApiUnavailable` | Required admin API could not be reached for a non-auth reason: 404 wrong-environment, 5xx, timeout, connect error. Kept separate so the known test-ring 404 wrong-host case does not inflate the auth count. |
+| `checkpointContract` | A checkpoint contract was missing or unresolved (target context/evidence not provided). |
+| `profileCardinality` | A profile family did not emit its required minimum validation rows. |
+| `evidenceAmbiguous` | The evidence window held multiple candidate or non-terminal runs, so the result could not be scored. |
+| `other` | Blocked for a cause outside the set above (explicit exhaustive fallback). |
+
+Nuances:
+
+- **Check events:** `blockReason` is non-empty only when `status == "Blocked"`.
+  It is `""` for every non-blocked check.
+- **Run events:** when a run has one or more blocked checks, the run's
+  `blockReason` is the highest-precedence cause among them. Precedence
+  (highest first): `adminApiAuthorization` > `adminApiUnavailable` >
+  `checkpointContract` > `profileCardinality` > `evidenceAmbiguous` >
+  `other`. A run with no blocked checks emits `""`.
+- **Decoupled from `runOutcome`.** A run can have `blocked > 0` but an overall
+  `runOutcome` of `Failed`/`Blocked (check errored)` (errored/failed rank above
+  blocked in the donut). The run still emits its `blockReason` whenever any
+  blocked check exists, so auth blocks are countable regardless of the final
+  donut slice. Count blocked customers/runs from `blockReason`, not from the
+  `runOutcome` wedge.
+- **Pre-1.5 data:** an empty `blockReason` on a blocked row is an event emitted
+  before this field shipped, not a classification of "no reason."
+
+### Coverage boundary (known gap, tracked as follow-up)
+
+`adminApiAuthorization` is emitted only when a required admin-API client
+raises on the authorization/binding path, where `cli._classify_client_block`
+sees the HTTP 401/403 or `AADSTS*` error. The Graph and Power Platform admin
+clients normalize *later* API responses into structured error dicts rather
+than raising, so a **post-auth** authorization denial (a 401/403 returned by
+a data call after the client already authenticated) may bypass the classifier
+and surface as a `Failed` check or `adminApiUnavailable`, not
+`adminApiAuthorization`. This path is not exercised by an automated test
+because there is no safe test tenant that reliably returns a post-auth
+401/403 without side effects. Treat the `adminApiAuthorization` count as a
+**lower bound** on admin-API authorization blocks, and track closing this gap
+(classify normalized client error dicts, add a tenant-free regression) as
+follow-up work.
+
+See `telemetry_queries.kql` section 3b for the customers-and-runs-blocked
+queries.
+
+
 
 1. **Fetch the (install, SHA, branch) triple for the tenant / event of interest.**
    Use `telemetry_queries.kql` §9a (FlightCheck) or §9b (ADK platform tables).
