@@ -197,6 +197,7 @@ def _validate_set_folder(
             parent,
             [document for document, _ in cases],
             context=f"Set folder {folder}",
+            case_names=[path.name for _, path in cases],
         )
     except (
         evaluation_csv.EvaluationCSVError,
