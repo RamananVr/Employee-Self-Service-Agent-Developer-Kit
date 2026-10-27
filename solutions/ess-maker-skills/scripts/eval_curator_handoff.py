@@ -185,6 +185,27 @@ def _validate_set_folder(
             "Set folder must contain exactly one EvaluationSet parent and "
             "one or more EvaluationData .mcs.yml artifacts.",
         )
+    # evaluation_csv_table() below does not itself enforce the Compare
+    # Meaning-only grader policy (only evaluation_csv.generate_set_csv's
+    # strict=True path does). Validate the parsed documents against the
+    # policy explicitly so a curator run that left GeneralQualityGrader in
+    # place (instead of following curate/SKILL.md step 2c) fails loudly here,
+    # rather than silently passing handoff validation.
+    try:
+        parent, cases = evaluation_csv.read_set_documents(folder)
+        evaluation_method_policy.validate_evaluation_documents(
+            parent,
+            [document for document, _ in cases],
+            context=f"Set folder {folder}",
+        )
+    except (
+        evaluation_csv.EvaluationCSVError,
+        evaluation_method_policy.EvaluationMethodError,
+    ) as exc:
+        raise CuratorHandoffError(
+            "invalid_set_folder",
+            f"Set folder artifacts violate the evaluation grading policy: {exc}",
+        ) from exc
     try:
         headers, rows = evaluation_csv.evaluation_csv_table(folder)
     except (

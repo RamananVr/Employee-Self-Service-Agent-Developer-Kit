@@ -307,6 +307,20 @@ the user to the supporting source) **without naming a backend** system,
 consistent with the vendored curator's "no backend names" rule. These cases
 follow the same vendored Step 6 artifact shape as every other set.
 
+**2c — enforce Compare Meaning-only grading.** This is another additive
+host write-responsibility, layered on top of the vendored Step 6 artifact
+shape **without editing the curator** body. The vendored curator template
+writes both a `GeneralQualityGrader` and a `CompareMeaningGrader` entry
+under each generated EvaluationSet's `graders` list. The ADK evaluation
+feature now supports Compare Meaning only (see
+`solutions/ess-maker-skills/scripts/evaluation_method_policy.py`). During
+the same Step 6 write pass, remove the `GeneralQualityGrader` entry from
+the `graders` list of every generated EvaluationSet parent `.mcs.yml`,
+leaving exactly one `CompareMeaningGrader` entry with its threshold
+unchanged. Do this for every set regardless of category — never leave
+more than one grader, and never leave `GeneralQualityGrader` as the sole
+grader for a single-turn set.
+
 The vendored curator skill's "Host integration contract" section describes
 resolving paths relative to a curator-package root that the submodule packaging
 once provided. That resolution does not apply here: the curator is vendored

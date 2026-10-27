@@ -8,6 +8,7 @@ import pytest
 
 import eval_curator_handoff
 import evaluation_csv
+import evaluation_method_policy
 
 
 def _workspace(repo_root: Path) -> Path:
@@ -413,6 +414,91 @@ def test_validate_handoff_rejects_conflicting_kind_discriminators(tmp_path):
         "  - input: How?\n"
         "    expectedOutput: Like this\n",
         encoding="utf-8",
+    )
+
+    with pytest.raises(eval_curator_handoff.CuratorHandoffError) as exc:
+        eval_curator_handoff.validate_handoff(tmp_path, handoff)
+
+    assert exc.value.error_code == "invalid_set_folder"
+
+
+def test_validate_handoff_rejects_dual_grader_set_folder(tmp_path):
+    """Pin that main's evaluation_method_policy rejects a curator-shaped set
+    that writes both GeneralQualityGrader and CompareMeaningGrader.
+
+    This is a guard-rail test, not a gap to close: generate_set_csv(strict=True)
+    already raises evaluation_method_policy.EvaluationMethodError for a dual-grader
+    set, confirmed during the main merge's Task 2.
+    """
+    workspace = _workspace(tmp_path)
+    exports = workspace / "exports"
+    set_folder = workspace / "dual-grader"
+    set_folder.mkdir(parents=True)
+    exports.mkdir()
+    (set_folder / "dual.mcs.yml").write_text(
+        "kind: EvaluationSet\n"
+        "displayName: Dual Grader\n"
+        "graders:\n"
+        "  - kind: GeneralQualityGrader\n"
+        "  - kind: CompareMeaningGrader\n"
+        "    threshold: 0.7\n",
+        encoding="utf-8",
+    )
+    (set_folder / "case.mcs.yml").write_text(
+        "kind: EvaluationData\n"
+        "rows:\n"
+        "  - input: How?\n"
+        "    expectedOutput: Like this\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(evaluation_method_policy.EvaluationMethodError) as exc:
+        evaluation_csv.generate_set_csv(
+            set_folder,
+            exports,
+            timestamp="20260927",
+            strict=True,
+        )
+
+    assert "CompareMeaningGrader" in str(exc.value) or "Compare Meaning" in str(
+        exc.value
+    )
+
+
+def test_validate_handoff_rejects_dual_grader_via_handoff_entry_point(tmp_path):
+    """Pin the end-to-end guarantee at eval_curator_handoff.validate_handoff:
+    a curator run that didn't strip GeneralQualityGrader (SKILL.md step 2c)
+    fails loudly via the broadened except clause in _validate_set_folder,
+    rather than with an unhandled EvaluationMethodError.
+    """
+    handoff = _valid_handoff(tmp_path)
+    workspace = _workspace(tmp_path)
+    set_folder = workspace / "dual-grader"
+    set_folder.mkdir()
+    (set_folder / "dual.mcs.yml").write_text(
+        "kind: EvaluationSet\n"
+        "displayName: Dual Grader\n"
+        "graders:\n"
+        "  - kind: GeneralQualityGrader\n"
+        "  - kind: CompareMeaningGrader\n"
+        "    threshold: 0.7\n",
+        encoding="utf-8",
+    )
+    (set_folder / "case.mcs.yml").write_text(
+        "kind: EvaluationData\n"
+        "rows:\n"
+        "  - input: How?\n"
+        "    expectedOutput: Like this\n",
+        encoding="utf-8",
+    )
+    handoff["Curator handoff"]["sets"].append(
+        {
+            "name": "Dual Grader",
+            "folder": "workspace/evaluations/dual-grader",
+            "csv": "workspace/evaluations/exports/placeholder.csv",
+            "caseCount": 1,
+            "qualityScore": 5,
+        }
     )
 
     with pytest.raises(eval_curator_handoff.CuratorHandoffError) as exc:
